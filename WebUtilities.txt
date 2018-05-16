@@ -1,0 +1,6 @@
+
+When you are using the legacy Banner grade entry and want to find any student UINs that have an unusual number of grade drop down (e.g. honors +H options, incomplete) ...
+Prints out UINs to the console of students that don't the usual 15 options (A+,A,A...)
+
+[...document.getElementsByName("grde_tab")].forEach((child) => {if(child.children.length!=15) console.log(child.parentNode.parentNode.childNodes[5].textContent)});
+

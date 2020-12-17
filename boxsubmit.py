@@ -7,8 +7,11 @@ from boxsdk.object.folder import Folder
 from boxsdk.object.file import File
 from boxsdk.object.collaboration import CollaborationRole
 
-import click
-# TODO folders can be created using create_subfolder (but used rclone) 
+# A utility to add and remove a single student to a single Box folder
+# Assumes the directory structure has already been created (and uploaded to Box e.g. with rclone
+# though with a bit more work these could be created too using using create_subfolder
+
+# Box reference-
 # https://github.com/box/box-python-sdk/blob/master/docs/usage/folders.md#get-information-about-a-folder
 
 def main():
@@ -35,10 +38,10 @@ def main():
     base_folder = client.folder(folder_id=base_folder_id).get()
     assert base_folder.name == base_folder_expected_name
       
-    # I cannot force get_items to return the folder name here, and pulling the folder object is sooo slow
+    # I cannot force get_items to return the folder names here, and pulling the folder object is sooo slow
     existing_items = base_folder.get_items(fields='id,type',limit=9999); 
     
-    # I prefer this approach of returning all subfolders to using search() because it avoids potential partial matches being returned first by Box
+    # I prefer the approach of returning all subfolders to using search() because it avoids potential partial matches being returned first by Box
     
     # Sanity check that the number of folders is the same as the number of students
     existing_items_ids =[i.id for i in existing_items if i.type=='folder']

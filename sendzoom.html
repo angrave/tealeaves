@@ -1,0 +1,64 @@
+<html>
+<head>
+
+    <script language='javascript'>
+//https://support.zoom.us/hc/en-us/articles/115002212983-Integrating-a-third-party-closed-captioning-service#LiveCaptionVendorInformation-ExamplePOST
+
+        function mylog(result) {
+            var thelog=document.getElementById('thelog');
+            thelog.textContent += `${result}`;
+
+        }
+        var sequence = 1;
+        function sendCaption(content, sid) {
+            const url = sid+'&lang=en-US&seq='+sequence;
+            const params = {
+                mode: 'no-cors',
+                headers: {'Content-Type': 'text/plain','Content-Length':content.length },
+                body:content,
+                method:'POST'
+            };
+            mylog(`${sequence}:${content}`)
+            // fetch will throw an exception if there is a connection error
+            // http status code errors are not treated as exceptions
+            fetch(url,params)
+            .then(res=>{sequence++})
+            .catch(error=>{console.log(error); mylog(`Error:${error}`)});
+        }
+        function sessionidchanged(startup) {
+            var sessionid=document.getElementById('sessionid');
+            var cueid=document.getElementById('cueid');
+            var sid = sessionid.value.trim();
+            if(!sid) {
+                sessionid.focus();
+                cueid.disabled = true;
+            } else {
+                cueid.disabled = false;
+                if(startup) cueid.focus();
+            }
+        }
+
+        function captionchanged(item) {
+            var content = item.value;
+            if( ! content.includes('\n')) { return true; }
+            item.value = '';
+            var sessionid=document.getElementById('sessionid')
+            var sid = sessionid.value.trim();
+            if(sid == '') { return true; }
+            sendCaption(content,sid);
+        }
+    </script>
+    </head>
+<body>
+    <label>Zoom API Token</label><br>
+    <input id=sessionid oninput='sessionidchanged(false)' type='text' placeholder='Copy Paste Zoom Transcript API Token URL' style="width: 100%;">
+    <br> <br>
+    <label>Cue (enter text and press return to send)</label><br>
+    <textarea id=cueid oninput='captionchanged(this)' style="width: 100%;"></textarea>
+    <br> <br>
+    <label>Sent Log</label><br><pre id='thelog' style="width: 100%;"></pre>
+</body>
+
+    <script language='javascript'>
+        sessionidchanged(true);        
+    </script>

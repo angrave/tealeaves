@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+from http.server import HTTPServer, SimpleHTTPRequestHandler, test
+import http.server, ssl
+import sys
+
+# Self signed cert created using openssl req -newkey rsa:2048 -new -nodes -x509 -days 3650 -keyout key.pem -out cert.pem
+cert="""-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCsJilU4F1MSFyv
+iHdzdDfBr9RAynqNXgMNt7MuU0FJdnQQ5/MAQ0YQ61QkBcxLORDCh8Sx294nak9R
+tVqLco+4dm6FpMBruzH+hXQOLwgMZpvNkIUMerdDTYvsxrq5K8oP5LnUjys0uX4f
+/TkniaSW3+EVAcQ/nzG5RQ7H4Gu/rWaM5JbsfmkLId1hgbIoNhNs8s1beOhQv2rj
+1ZMAMbZGhEOjqDy71yOnrnOsxAXOlbRMdscJeeXZQ0Lzl1LCELO+AZLs6u5mENxz
+gQb6ianDTyEPDIorpB20qtrpBLUtxSBA5wNycayu1TBMv06FzDlCnpMdBwsU8eXr
++7j4BMBTAgMBAAECggEAEjFeQNgNRBiJowtbBFqN4exBFC/Rz8rVq8d0KjsmNStN
+jNPWfHqflv4nwD7UnkaDnOtYQCuqSKQVid8OmJoc0jPB7mHA7CG2YN2drDoQMa9O
+W+UgCneVkolJdlZyOUuFaTSU5v/SYxoPWDYcqi8Ds+YpFV1AbjDWwmun6juvZ2wx
+fsEzKTAgZidU+7F1RvDs3bamTzk77gtdK2Kg0Xw6t2sh9F53jpw43wBmfd+N7Z3d
+MGFVq+Q88qBFvNfLLIBqTHPtEFOTmpRoQnRAutb9GBDgxsTWg2MYyhrg2q6jw5KT
+dxYAmcu760m0uEujdTaAhX2aTrlt5yN/kCfnt/BMsQKBgQDWSQk55A/aaSavYMTX
+3Nu6eiw3IlkBCLfWE2heceMFDrli3uGElGeNQr1wTVaTZRO2eq/hQIcZJqPUwDLm
+dz3r4SGkKJTfA4DxmFkvasIlP7p+TbnM17qh0UbDWgx8dK1WWaklIyf5mHjW8pHn
+qlfSvXqwZGtKz/yXuTgKLc27HwKBgQDNqUFh0tzxBAPJbYm8MUAJmpoVYLDmfq+R
+BC5csU8N7pzrlHzyEidh78xdjOOoxvSxOYwgNrq74o34i7/K+nuYJkX3VTRHfOD7
+PEX1m8P4wgw21rObY2Br8zkbRVwTrdgHDRxRfcYf8KxVutttxlBV0D4i4Bf+o/kf
+o4THHeWITQKBgQCHerfNlSZ8xXyC52CsxeNaXAH2fc3d/IAWZkDXbZPFz9Bf9WCJ
+7TYnNqoFBbCWEhLLjXgDp0ODIE32penIkl1g8/7MBihRc6qjlNnWQ94ppMgpMMUn
+AMHrqx/dROKeETrCXH+3jimpAcBszgJ3gNhz0f5u5Z58N1GRL7aBoQHwqwKBgBHI
+l/nAhRBmO3mYejeGvrXV44sDsGhN/hp5FRU409AtmO4aCe/YuAUU+kQAodL/WTtV
+8ZL7iIwknAgo9W202Skf7h7kBEBGQSIYZShGztxc0zeOuzstjbHn90EvbzXYa3y4
+moFFcfNjGVPUc5L7egjhl+3mGM0RGsKsnhelsyplAoGBAJ8v+kuhvO8eusWZ4IYE
+5sbqQnTS0LFOOl9RlI2ccdG9VesGVBfN9tv7u4JhGP1NbVe2sg+0ryjHJcNzgoPJ
+Qp1m74V9DizQFbBHUCCa2MX8xlyfVcxGkemxhdE/2IKA4k7VztFsXjTvhRdwA7d+
+/qnxrlfxEhRV/HoGa6pJ7GhR
+-----END PRIVATE KEY-----
+-----BEGIN CERTIFICATE-----
+MIIDSDCCAjACCQD9Nn7DB5wdbzANBgkqhkiG9w0BAQsFADBmMQswCQYDVQQGEwJ1
+czERMA8GA1UECAwISWxsaW5vaXMxDzANBgNVBAcMBlVyYmFuYTEfMB0GA1UECgwW
+VW5pdmVyc2l0eSBvZiBJbGxpbm9pczESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTIy
+MDMyNTE5MTUzOFoXDTMyMDMyMjE5MTUzOFowZjELMAkGA1UEBhMCdXMxETAPBgNV
+BAgMCElsbGlub2lzMQ8wDQYDVQQHDAZVcmJhbmExHzAdBgNVBAoMFlVuaXZlcnNp
+dHkgb2YgSWxsaW5vaXMxEjAQBgNVBAMMCWxvY2FsaG9zdDCCASIwDQYJKoZIhvcN
+AQEBBQADggEPADCCAQoCggEBAKwmKVTgXUxIXK+Id3N0N8Gv1EDKeo1eAw23sy5T
+QUl2dBDn8wBDRhDrVCQFzEs5EMKHxLHb3idqT1G1Wotyj7h2boWkwGu7Mf6FdA4v
+CAxmm82QhQx6t0NNi+zGurkryg/kudSPKzS5fh/9OSeJpJbf4RUBxD+fMblFDsfg
+a7+tZozklux+aQsh3WGBsig2E2zyzVt46FC/auPVkwAxtkaEQ6OoPLvXI6euc6zE
+Bc6VtEx2xwl55dlDQvOXUsIQs74Bkuzq7mYQ3HOBBvqJqcNPIQ8MiiukHbSq2ukE
+tS3FIEDnA3JxrK7VMEy/ToXMOUKekx0HCxTx5ev7uPgEwFMCAwEAATANBgkqhkiG
+9w0BAQsFAAOCAQEAVjPDWE3AQm8Ib6s6QskIc5RsQPvL7WqwevfVF2dqEyK/FDlb
+ZQmxN2KP/0njlunfs7UQjVZvTZdnsEj5ZN2vnuCeh0OrKrv6uWpH/lXivF5BPu7m
+Z06oYfbncCD/Odo7hJkYqwl8pDC2sKB5S0yZUkcXZjfWpT62ElpDjtwpuHZmbWqI
+Lr5zZ/95KARjj3YhWtlyXfjKEGPpqGeKBRJUifb0MvaUeKFhIQot8yaM0GraRZwM
+37VshArlBXc0ri6E5xb4rtIDTeKoV7C6B8gmarOqv+L6UBV81yGYf19VeOJEmhMw
+chwmjuvOsUxAkx9jfi2+a/RVt0dmtELJnVm9RA==
+-----END CERTIFICATE-----"""
+
+with open('localhost.pem','w') as f:
+    print(cert, file=f)
+
+class CORSRequestHandler (SimpleHTTPRequestHandler):
+    def end_headers (self):
+        self.send_header('Access-Control-Allow-Origin', '*')
+        SimpleHTTPRequestHandler.end_headers(self)
+
+port = 4443
+server_address = ('localhost', port)
+httpd = http.server.HTTPServer(server_address, CORSRequestHandler)
+httpd.socket = ssl.wrap_socket(httpd.socket,
+                               server_side=True,
+                               certfile='localhost.pem',
+                               ssl_version=ssl.PROTOCOL_TLS)
+print(f"listening on port {port} - warning anyone can connect and see all files in this current directory (including the private key)!")
+print(f"https://localhost:{port}/")
+httpd.serve_forever()

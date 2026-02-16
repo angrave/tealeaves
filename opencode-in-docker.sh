@@ -1,4 +1,12 @@
 #!/bin/sh
+# ProTip: Read the offical opencode documentation!
+# 
+# Quick Getting Started tips: 
+# Create a new directory "hello-ai", cd to that directory and run this script
+# It will mount that directory and download the offocial opencode docker image
+# Type /connect then search for litellm.kooper.org to connect to it (it will ask you for the api key)
+# Type "Hello" or "Create a file hello.py that prints hello world"
+# Type /exit to exit
 
 export OPENCODE_CONFIG_CONTENT=$(cat <<EOF
 {
@@ -27,11 +35,5 @@ docker run -it --rm \
   -v ~/.local/share/opencode-dockerized/:/root/.local/share/opencode/ \
   ghcr.io/anomalyco/opencode:latest "$@"
 
-# ProTip: Read the offical opencode documentation!
-# 
-# Quick Getting Started tips: 
-# Create a new test project "hello-ai" and cd to that directory
-# Type /connect then search for litellm.kooper.org to connect to it (it will ask you for the api key)
-# Type "Hello" or "Create a file hello.py that prints hello world"
-# Type /exit to exit
+
 

@@ -26,3 +26,12 @@ docker run -it --rm \
   -v "$(pwd):/workspace" \
   -v ~/.local/share/opencode-dockerized/:/root/.local/share/opencode/ \
   ghcr.io/anomalyco/opencode:latest "$@"
+
+# ProTip: Read the offical opencode documentation!
+# 
+# Quick Getting Started tips: 
+# Create a new test project "hello-ai" and cd to that directory
+# Type /connect then search for litellm.kooper.org to connect to it (it will ask you for the api key)
+# Type "Hello" or "Create a file hello.py that prints hello world"
+# Type /exit to exit
+

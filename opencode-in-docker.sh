@@ -19,6 +19,7 @@ EOF
 # The -v mount syntax creates our own ~/.local/share/opencode-dockerized if it does not exist
 # You could mount ~/.local/share/opencode instead
 
+# Use official opencode image
 docker run -it --rm \
   -e OPENCODE_CONFIG_CONTENT \
   --workdir /workspace \

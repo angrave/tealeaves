@@ -6,8 +6,8 @@
 # This uses Docker (https://docs.docker.com/desktop/) to add some security; it isolates models from the rest of your system
 # You need to know how to use the terminal
 
-# Create a new directory e.g., "hello-ai", and change to that directory and run this script
-# It will mount that directory and download the offocial opencode docker image
+# Create a new directory e.g., "hello-ai", change to that directory and then run this script
+# It will mount that directory and download the official opencode docker image
 # Type /connect then search for litellm.kooper.org to connect to it (it will ask you for the api key)
 # Type "Hello" or "Create a file hello.py that prints hello world"
 # Type /exit to exit

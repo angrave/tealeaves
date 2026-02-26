@@ -12,3 +12,5 @@ After creating the initial demo, except for Sonnet because it was good enough, m
 * [Sonnet 4.6](ringbuffer-Sonnet4-6.html)
 * [ChatGPT 5.2 Instant](ringbuffer-chatgpt5_2instant.html)
 * [Qwen3-Coder-Next](ringbuffer-Qwen3-Coder-next.html)
+
+See these demos live  http://angrave.github.io/tealeaves/gh-pages/ring-buffer-genai-viz/

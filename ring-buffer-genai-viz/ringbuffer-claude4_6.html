@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ring Buffer with Counting Semaphores</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  background: #1a1a2e;
+  color: #e0e0e0;
+  min-height: 100vh;
+  padding: 20px;
+}
+h1 { text-align: center; color: #e94560; margin-bottom: 4px; font-size: 1.5em; }
+.subtitle { text-align: center; color: #888; margin-bottom: 18px; font-size: 0.95em; }
+
+.container { max-width: 900px; margin: 0 auto; }
+
+/* Ring buffer visual */
+.ring-wrap { display: flex; justify-content: center; margin: 18px 0; }
+canvas { background: #16213e; border-radius: 12px; }
+
+/* Semaphore displays */
+.sem-row {
+  display: flex; justify-content: center; gap: 40px; margin: 14px 0;
+  flex-wrap: wrap;
+}
+.sem-box {
+  background: #16213e; border-radius: 10px; padding: 12px 22px;
+  text-align: center; min-width: 180px;
+}
+.sem-box h3 { font-size: 0.85em; color: #aaa; margin-bottom: 4px; }
+.sem-val { font-size: 2.2em; font-weight: bold; font-variant-numeric: tabular-nums; }
+.sem-items .sem-val { color: #e94560; }
+.sem-spaces .sem-val { color: #5b9bd5; }
+.sem-mutex .sem-val { color: #e9b145; }
+
+/* Blocked state animations */
+@keyframes blockedPulse {
+  0%, 100% { box-shadow: 0 0 8px 2px rgba(233,69,96,0.4); }
+  50% { box-shadow: 0 0 22px 6px rgba(233,69,96,0.8); }
+}
+@keyframes blockedBlink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.sem-box.blocked {
+  animation: blockedPulse 0.8s ease-in-out infinite;
+  border: 2px solid #e94560;
+}
+.sem-box.blocked .sem-val { animation: blockedBlink 0.8s ease-in-out infinite; }
+.sem-box.blocked h3::after {
+  content: ' — BLOCKED';
+  color: #e94560;
+  font-weight: bold;
+}
+
+/* Controls */
+.controls {
+  display: flex; justify-content: center; gap: 12px; margin: 14px 0;
+  flex-wrap: wrap; align-items: center;
+}
+button {
+  padding: 8px 20px; border: none; border-radius: 6px;
+  font-size: 0.95em; cursor: pointer; font-weight: 600;
+  transition: opacity 0.15s;
+}
+button:hover { opacity: 0.85; }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-produce { background: #0f3460; color: #fff; }
+.btn-consume { background: #e94560; color: #fff; }
+.btn-reset { background: #444; color: #fff; }
+.btn-auto { background: #533483; color: #fff; }
+
+label.toggle {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 0.9em; cursor: pointer; user-select: none;
+}
+label.toggle input { width: 16px; height: 16px; accent-color: #e9b145; }
+
+select, input[type=range] { accent-color: #533483; }
+select {
+  background: #16213e; color: #e0e0e0; border: 1px solid #333;
+  border-radius: 4px; padding: 4px 8px; font-size: 0.9em;
+}
+
+.speed-label { font-size: 0.85em; color: #aaa; }
+
+/* Log */
+.log-wrap {
+  background: #0d1117; border-radius: 8px; padding: 10px 14px;
+  max-height: 180px; overflow-y: auto; font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 0.82em; line-height: 1.55; margin-top: 14px;
+}
+.log-wrap p { margin: 0; }
+.log-produce { color: #58a6ff; }
+.log-consume { color: #f97583; }
+.log-block { color: #e9b145; }
+.log-mutex { color: #d2a8ff; }
+.log-info { color: #8b949e; }
+
+/* Pseudocode */
+.pseudo-row { display: flex; gap: 20px; margin-top: 18px; flex-wrap: wrap; justify-content: center; }
+.pseudo-box {
+  background: #16213e; border-radius: 10px; padding: 14px 18px;
+  font-family: 'Consolas', 'Courier New', monospace; font-size: 0.82em;
+  line-height: 1.7; flex: 1; min-width: 280px; max-width: 420px;
+}
+.pseudo-box h3 { color: #aaa; font-size: 0.9em; margin-bottom: 6px; font-family: 'Segoe UI', system-ui, sans-serif; }
+.pseudo-box .hl { background: rgba(233,69,96,0.25); display: inline-block; width: 100%; border-radius: 3px; padding: 0 4px; }
+.pseudo-box .hl-m { background: rgba(233,177,69,0.2); }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Fixed-Size Ring Buffer</h1>
+  <p class="subtitle">Bounded buffer with counting semaphores &amp; optional mutex</p>
+
+  <div class="ring-wrap">
+    <canvas id="ringCanvas" width="520" height="300"></canvas>
+  </div>
+
+  <div class="sem-row">
+    <div class="sem-box sem-spaces">
+      <h3>sem_spaces</h3>
+      <div class="sem-val" id="valSpaces">8</div>
+    </div>
+    <div class="sem-box sem-items">
+      <h3>sem_items</h3>
+      <div class="sem-val" id="valItems">0</div>
+    </div>
+    <div class="sem-box sem-mutex" id="mutexBox" style="display:none">
+      <h3>mutex</h3>
+      <div class="sem-val" id="valMutex">1</div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button class="btn-produce" onclick="manualProduce()">Produce</button>
+    <button class="btn-consume" onclick="manualConsume()">Consume</button>
+    <button class="btn-auto" id="btnAuto" onclick="toggleAuto()">Auto</button>
+    <button class="btn-reset" onclick="resetAll()">Reset</button>
+    <label class="toggle"><input type="checkbox" id="chkMutex" onchange="toggleMutex()"> Mutex</label>
+    <label>
+      <select id="selSize" onchange="changeSize()">
+        <option value="4">4 slots</option>
+        <option value="6">6 slots</option>
+        <option value="8" selected>8 slots</option>
+        <option value="12">12 slots</option>
+      </select>
+    </label>
+    <span class="speed-label">Speed</span>
+    <input type="range" id="speedSlider" min="1" max="10" value="5" style="width:90px">
+  </div>
+
+  <div class="pseudo-row">
+    <div class="pseudo-box" id="pseudoProd">
+      <h3>Producer</h3>
+      <div id="codeProd"></div>
+    </div>
+    <div class="pseudo-box" id="pseudoCons">
+      <h3>Consumer</h3>
+      <div id="codeCons"></div>
+    </div>
+  </div>
+
+  <div class="log-wrap" id="logBox"></div>
+</div>
+
+<script>
+// ── State ──
+let N = 8;
+let buf = new Array(N).fill(null);
+let head = 0;   // next produce index
+let tail = 0;   // next consume index
+let semSpaces = N;
+let semItems = 0;
+let mutex = 1;
+let useMutex = false;
+let autoMode = false;
+let autoTimer = null;
+let animating = false;
+let itemCounter = 0;
+let prodStep = -1; // current highlighted pseudocode line for producer
+let consStep = -1;
+let blockedProducer = false;
+let blockedConsumer = false;
+
+const COLORS = [
+  '#e94560','#0f3460','#533483','#e9b145','#1a9988',
+  '#c74b50','#3a86ff','#8338ec','#ff6d00','#06d6a0',
+  '#ef476f','#118ab2'
+];
+
+// ── Canvas drawing ──
+const canvas = document.getElementById('ringCanvas');
+const ctx = canvas.getContext('2d');
+
+function draw() {
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  const cx = W / 2, cy = H / 2 + 5;
+  const R = Math.min(cx, cy) - 45;
+  const slotR = Math.min(28, (2 * Math.PI * R) / N / 2.8);
+
+  // Draw ring outline
+  ctx.beginPath();
+  ctx.arc(cx, cy, R, 0, 2 * Math.PI);
+  ctx.strokeStyle = '#2a2a4a';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  for (let i = 0; i < N; i++) {
+    const angle = (2 * Math.PI * i) / N - Math.PI / 2;
+    const x = cx + R * Math.cos(angle);
+    const y = cy + R * Math.sin(angle);
+
+    // Slot circle
+    ctx.beginPath();
+    ctx.arc(x, y, slotR, 0, 2 * Math.PI);
+    if (buf[i] !== null) {
+      ctx.fillStyle = COLORS[buf[i] % COLORS.length];
+      ctx.fill();
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      // Item number
+      ctx.fillStyle = '#fff';
+      ctx.font = `bold ${Math.max(11, slotR * 0.7)}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(buf[i], x, y);
+    } else {
+      ctx.fillStyle = '#1e2a4a';
+      ctx.fill();
+      ctx.strokeStyle = '#3a3a5a';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+
+    // Index label
+    ctx.fillStyle = '#666';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const lx = cx + (R + slotR + 14) * Math.cos(angle);
+    const ly = cy + (R + slotR + 14) * Math.sin(angle);
+    ctx.fillText(i, lx, ly);
+  }
+
+  // Head pointer (producer) — outer
+  drawPointer(cx, cy, R, slotR, head, '#0f3460', 'P', 0);
+  // Tail pointer (consumer) — inner
+  drawPointer(cx, cy, R, slotR, tail, '#e94560', 'C', 18);
+
+  // Legend
+  ctx.font = '12px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#5b9bd5';
+  ctx.fillText('\u25B6 P = Producer (head)', 8, 20);
+  ctx.fillStyle = '#e94560';
+  ctx.fillText('\u25B6 C = Consumer (tail)', 8, 38);
+
+  // Blocked banners
+  if (blockedProducer || blockedConsumer) {
+    const msg = blockedProducer ? 'PRODUCER BLOCKED \u2014 buffer full!' : 'CONSUMER BLOCKED \u2014 buffer empty!';
+    const pulse = 0.6 + 0.4 * Math.abs(Math.sin(Date.now() / 300));
+    ctx.save();
+    ctx.globalAlpha = pulse;
+    ctx.fillStyle = 'rgba(233,69,96,0.85)';
+    const bw = 340, bh = 34;
+    const bx = (W - bw) / 2, by = H - bh - 10;
+    ctx.beginPath();
+    ctx.roundRect(bx, by, bw, bh, 6);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(msg, W / 2, by + bh / 2);
+    ctx.restore();
+  }
+}
+
+function drawPointer(cx, cy, R, slotR, idx, color, label, extraInset) {
+  const angle = (2 * Math.PI * idx) / N - Math.PI / 2;
+  const inner = R - slotR - 16 - extraInset;
+  const x = cx + inner * Math.cos(angle);
+  const y = cy + inner * Math.sin(angle);
+
+  ctx.beginPath();
+  ctx.arc(x, y, 11, 0, 2 * Math.PI);
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 12px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(label, x, y);
+}
+
+// ── Pseudocode display ──
+const prodLines = [
+  'sem_wait(&sem_spaces)',
+  '  // blocked: buffer full!',
+  'lock(&mutex)',
+  'buffer[head] = item',
+  'head = (head + 1) % N',
+  'unlock(&mutex)',
+  'sem_post(&sem_items)',
+];
+const consLines = [
+  'sem_wait(&sem_items)',
+  '  // blocked: buffer empty!',
+  'lock(&mutex)',
+  'item = buffer[tail]',
+  'tail = (tail + 1) % N',
+  'unlock(&mutex)',
+  'sem_post(&sem_spaces)',
+];
+
+function renderPseudo() {
+  const prodEl = document.getElementById('codeProd');
+  const consEl = document.getElementById('codeCons');
+  prodEl.innerHTML = prodLines.map((l, i) => {
+    // Hide mutex lines if not using mutex
+    if (!useMutex && (i === 2 || i === 5)) return '';
+    // Hide "blocked" line unless we are at that step
+    if (i === 1 && prodStep !== 1) return '';
+    let cls = '';
+    if (i === prodStep) cls = (i === 2 || i === 5) ? 'hl hl-m' : 'hl';
+    return `<div class="${cls}">${esc(l)}</div>`;
+  }).join('');
+  consEl.innerHTML = consLines.map((l, i) => {
+    if (!useMutex && (i === 2 || i === 5)) return '';
+    if (i === 1 && consStep !== 1) return '';
+    let cls = '';
+    if (i === consStep) cls = (i === 2 || i === 5) ? 'hl hl-m' : 'hl';
+    return `<div class="${cls}">${esc(l)}</div>`;
+  }).join('');
+}
+
+function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ── UI update ──
+let animFrameId = null;
+function updateUI() {
+  document.getElementById('valSpaces').textContent = semSpaces;
+  document.getElementById('valItems').textContent = semItems;
+  document.getElementById('valMutex').textContent = mutex;
+  // Apply blocked class to semaphore boxes
+  const spacesBox = document.querySelector('.sem-spaces');
+  const itemsBox = document.querySelector('.sem-items');
+  spacesBox.classList.toggle('blocked', blockedProducer);
+  itemsBox.classList.toggle('blocked', blockedConsumer);
+  draw();
+  renderPseudo();
+  // Animate canvas banner pulse when blocked
+  if (blockedProducer || blockedConsumer) {
+    if (!animFrameId) {
+      (function pulse() {
+        if (!blockedProducer && !blockedConsumer) { animFrameId = null; return; }
+        draw();
+        animFrameId = requestAnimationFrame(pulse);
+      })();
+    }
+  }
+}
+
+// ── Animated produce / consume ──
+function delay(ms) {
+  const speed = parseInt(document.getElementById('speedSlider').value);
+  return new Promise(r => setTimeout(r, ms / speed));
+}
+
+async function produce() {
+  if (animating) return;
+  animating = true;
+  const item = ++itemCounter;
+
+  // sem_wait(spaces)
+  prodStep = 0; updateUI();
+  log(`Producer: sem_wait(&sem_spaces)  [spaces=${semSpaces}]`, 'produce');
+  await delay(500);
+
+  if (semSpaces <= 0) {
+    prodStep = 1; blockedProducer = true; updateUI();
+    log('Producer BLOCKED: buffer full! Waiting for space...', 'block');
+    animating = false;
+    return;
+  }
+  blockedProducer = false;
+  semSpaces--;
+  updateUI();
+  await delay(300);
+
+  // mutex lock
+  if (useMutex) {
+    prodStep = 2; updateUI();
+    log('Producer: lock(&mutex)', 'mutex');
+    mutex = 0; updateUI();
+    await delay(400);
+  }
+
+  // write
+  prodStep = 3; updateUI();
+  buf[head] = item;
+  log(`Producer: buffer[${head}] = ${item}`, 'produce');
+  updateUI();
+  await delay(500);
+
+  // advance head
+  prodStep = 4; updateUI();
+  head = (head + 1) % N;
+  log(`Producer: head = ${head}`, 'produce');
+  updateUI();
+  await delay(300);
+
+  // mutex unlock
+  if (useMutex) {
+    prodStep = 5; updateUI();
+    mutex = 1; updateUI();
+    log('Producer: unlock(&mutex)', 'mutex');
+    await delay(300);
+  }
+
+  // sem_post(items) — this unblocks a waiting consumer
+  prodStep = 6; updateUI();
+  semItems++;
+  blockedConsumer = false;
+  log(`Producer: sem_post(&sem_items)  [items=${semItems}]`, 'produce');
+  updateUI();
+  await delay(300);
+
+  prodStep = -1; updateUI();
+  animating = false;
+}
+
+async function consume() {
+  if (animating) return;
+  animating = true;
+
+  // sem_wait(items)
+  consStep = 0; updateUI();
+  log(`Consumer: sem_wait(&sem_items)  [items=${semItems}]`, 'consume');
+  await delay(500);
+
+  if (semItems <= 0) {
+    consStep = 1; blockedConsumer = true; updateUI();
+    log('Consumer BLOCKED: buffer empty! Waiting for items...', 'block');
+    animating = false;
+    return;
+  }
+  blockedConsumer = false;
+  semItems--;
+  updateUI();
+  await delay(300);
+
+  // mutex lock
+  if (useMutex) {
+    consStep = 2; updateUI();
+    log('Consumer: lock(&mutex)', 'mutex');
+    mutex = 0; updateUI();
+    await delay(400);
+  }
+
+  // read
+  consStep = 3; updateUI();
+  const item = buf[tail];
+  buf[tail] = null;
+  log(`Consumer: item = buffer[${tail}]  (got ${item})`, 'consume');
+  updateUI();
+  await delay(500);
+
+  // advance tail
+  consStep = 4; updateUI();
+  tail = (tail + 1) % N;
+  log(`Consumer: tail = ${tail}`, 'consume');
+  updateUI();
+  await delay(300);
+
+  // mutex unlock
+  if (useMutex) {
+    consStep = 5; updateUI();
+    mutex = 1; updateUI();
+    log('Consumer: unlock(&mutex)', 'mutex');
+    await delay(300);
+  }
+
+  // sem_post(spaces) — this unblocks a waiting producer
+  consStep = 6; updateUI();
+  semSpaces++;
+  blockedProducer = false;
+  log(`Consumer: sem_post(&sem_spaces)  [spaces=${semSpaces}]`, 'consume');
+  updateUI();
+  await delay(300);
+
+  consStep = -1; updateUI();
+  animating = false;
+}
+
+// ── Manual buttons ──
+function manualProduce() { produce(); }
+function manualConsume() { consume(); }
+
+// ── Auto mode ──
+function toggleAuto() {
+  autoMode = !autoMode;
+  document.getElementById('btnAuto').textContent = autoMode ? 'Stop' : 'Auto';
+  if (autoMode) runAuto();
+}
+
+async function runAuto() {
+  while (autoMode) {
+    if (!animating) {
+      // Randomly pick produce or consume, biased by fullness
+      const pBias = semItems / N;
+      if (Math.random() > pBias) {
+        await produce();
+      } else {
+        await consume();
+      }
+    }
+    await delay(200);
+  }
+}
+
+// ── Mutex toggle ──
+function toggleMutex() {
+  useMutex = document.getElementById('chkMutex').checked;
+  document.getElementById('mutexBox').style.display = useMutex ? '' : 'none';
+  updateUI();
+}
+
+// ── Buffer size ──
+function changeSize() {
+  if (autoMode) toggleAuto();
+  N = parseInt(document.getElementById('selSize').value);
+  resetAll();
+}
+
+// ── Reset ──
+function resetAll() {
+  if (autoMode) toggleAuto();
+  animating = false;
+  buf = new Array(N).fill(null);
+  head = 0; tail = 0;
+  semSpaces = N; semItems = 0; mutex = 1;
+  itemCounter = 0;
+  prodStep = -1; consStep = -1;
+  blockedProducer = false; blockedConsumer = false;
+  document.getElementById('logBox').innerHTML = '';
+  log(`Reset: buffer size = ${N}, sem_spaces = ${N}, sem_items = 0`, 'info');
+  updateUI();
+}
+
+// ── Log ──
+function log(msg, cls) {
+  const box = document.getElementById('logBox');
+  const p = document.createElement('p');
+  p.className = 'log-' + cls;
+  p.textContent = msg;
+  box.appendChild(p);
+  box.scrollTop = box.scrollHeight;
+  // Keep log manageable
+  while (box.children.length > 200) box.removeChild(box.firstChild);
+}
+
+// ── Init ──
+log(`Initialized: buffer size = ${N}, sem_spaces = ${N}, sem_items = 0`, 'info');
+updateUI();
+</script>
+</body>
+</html>

@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Ring Buffer with Counting Semaphores</title>
+<style>
+  body {
+    font-family: system-ui, sans-serif;
+    background: #f5f7fb;
+    margin: 0;
+    padding: 20px;
+  }
+
+  h1 {
+    text-align: center;
+  }
+
+  .controls {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+  }
+
+  button {
+    padding: 8px 14px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+
+  label {
+    font-size: 14px;
+  }
+
+  .status {
+    display: flex;
+    justify-content: center;
+    gap: 40px;
+    margin-bottom: 20px;
+    font-size: 16px;
+  }
+
+  .semaphore {
+    padding: 10px 14px;
+    border-radius: 6px;
+    background: #ffffff;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+  }
+
+  .buffer {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+  }
+
+  .slot {
+    width: 60px;
+    height: 60px;
+    border-radius: 8px;
+    border: 2px solid #444;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    background: #fff;
+    transition: background 0.3s;
+  }
+
+  .filled {
+    background: #a7d7ff;
+  }
+
+  .head {
+    border-color: #2ecc71;
+  }
+
+  .tail {
+    border-color: #e74c3c;
+  }
+
+  .mutex {
+    margin-top: 15px;
+    text-align: center;
+    font-size: 15px;
+  }
+
+  .locked {
+    color: #e74c3c;
+    font-weight: bold;
+  }
+
+  .unlocked {
+    color: #2ecc71;
+    font-weight: bold;
+  }
+
+  .note {
+    max-width: 800px;
+    margin: 25px auto 0;
+    font-size: 14px;
+    color: #333;
+    background: #ffffff;
+    padding: 15px;
+    border-radius: 8px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+  }
+</style>
+</head>
+
+<body>
+
+<h1>Ring Buffer with Counting Semaphores</h1>
+
+<div class="controls">
+  <button onclick="produce()">Produce</button>
+  <button onclick="consume()">Consume</button>
+
+  <label>
+    Producers:
+    <input type="number" id="producers" value="1" min="1" max="5">
+  </label>
+
+  <label>
+    Consumers:
+    <input type="number" id="consumers" value="1" min="1" max="5">
+  </label>
+
+  <label>
+    <input type="checkbox" id="mutexToggle" checked>
+    Use Mutex
+  </label>
+</div>
+
+<div class="status">
+  <div class="semaphore">Items semaphore: <span id="itemsCount">0</span></div>
+  <div class="semaphore">Spaces semaphore: <span id="spacesCount">5</span></div>
+</div>
+
+<div class="buffer" id="buffer"></div>
+
+<div class="mutex">
+  Mutex state:
+  <span id="mutexState" class="unlocked">UNLOCKED</span>
+</div>
+
+<div class="note">
+  <strong>Teaching notes:</strong>
+  <ul>
+    <li><code>items</code> prevents <em>underflow</em></li>
+    <li><code>spaces</code> prevents <em>overflow</em></li>
+    <li>The mutex protects <code>head</code>, <code>tail</code>, and the buffer itself</li>
+    <li>Disable the mutex and increase producers/consumers to demonstrate race conditions</li>
+  </ul>
+</div>
+
+<script>
+const BUFFER_SIZE = 5;
+const buffer = new Array(BUFFER_SIZE).fill(null);
+
+let head = 0;
+let tail = 0;
+
+// Counting semaphores
+let items = 0;
+let spaces = BUFFER_SIZE;
+
+// Mutex
+let mutexLocked = false;
+
+// Animation delay
+const STEP_DELAY = 400;
+
+const bufferDiv = document.getElementById("buffer");
+const itemsSpan = document.getElementById("itemsCount");
+const spacesSpan = document.getElementById("spacesCount");
+const mutexSpan = document.getElementById("mutexState");
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function render() {
+  bufferDiv.innerHTML = "";
+  buffer.forEach((val, i) => {
+    const slot = document.createElement("div");
+    slot.className = "slot";
+    if (val !== null) slot.classList.add("filled");
+    if (i === head) slot.classList.add("head");
+    if (i === tail) slot.classList.add("tail");
+    slot.textContent = val === null ? "" : val;
+    bufferDiv.appendChild(slot);
+  });
+
+  itemsSpan.textContent = items;
+  spacesSpan.textContent = spaces;
+
+  mutexSpan.textContent = mutexLocked ? "LOCKED" : "UNLOCKED";
+  mutexSpan.className = mutexLocked ? "locked" : "unlocked";
+}
+
+async function lockMutex() {
+  while (mutexLocked) {
+    await sleep(50);
+  }
+  mutexLocked = true;
+  render();
+}
+
+function unlockMutex() {
+  mutexLocked = false;
+  render();
+}
+
+async function produce() {
+  const count = parseInt(document.getElementById("producers").value);
+
+  for (let p = 0; p < count; p++) {
+    await sleep(STEP_DELAY);
+
+    // wait(spaces)
+    if (spaces === 0) return;
+    spaces--;
+    render();
+
+    if (document.getElementById("mutexToggle").checked) {
+      await lockMutex();
+    }
+
+    // critical section
+    buffer[tail] = "●";
+    tail = (tail + 1) % BUFFER_SIZE;
+    render();
+
+    if (document.getElementById("mutexToggle").checked) {
+      unlockMutex();
+    }
+
+    // signal(items)
+    items++;
+    render();
+  }
+}
+
+async function consume() {
+  const count = parseInt(document.getElementById("consumers").value);
+
+  for (let c = 0; c < count; c++) {
+    await sleep(STEP_DELAY);
+
+    // wait(items)
+    if (items === 0) return;
+    items--;
+    render();
+
+    if (document.getElementById("mutexToggle").checked) {
+      await lockMutex();
+    }
+
+    // critical section
+    buffer[head] = null;
+    head = (head + 1) % BUFFER_SIZE;
+    render();
+
+    if (document.getElementById("mutexToggle").checked) {
+      unlockMutex();
+    }
+
+    // signal(spaces)
+    spaces++;
+    render();
+  }
+}
+
+render();
+</script>
+
+</body>
+</html>

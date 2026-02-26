@@ -1,6 +1,7 @@
-A GenAI experiment to create an interactive animation of a ring buffer using counting semaphores and a mutex
+A GenAI experiment to create an interactive animation of a ring buffer using counting semaphores and a mutex. Claude Opus and  Soneet, ChatGPT and Qwen3-Coder-Next implementations were created.
 
-Claude4.6, Sonnet and Qwen3-Coder-Next implementations were created.
+![Screenshot of Ring Buffer Simulator created using Opus 4.6](https://angrave.github.io/tealeaves/ring-buffer-genai-viz/RingBuffer-Opus.png)
+
 
 The initial prompt was -
 
@@ -17,7 +18,7 @@ See these demos [live](https://angrave.github.io/tealeaves/ring-buffer-genai-viz
 
 None of the html content was WCAG compliant, so later, in a new session I asked each model to fix their code.
 
-Make a new file postfix '-wcag.html' of the existing file. Take the current html in this directory and ensure it is WCAG 2.1 AA Compliant and the web application is accessible with a screen reader.
+Make a new file postfix '-wcag.html' of the existing file. Take the current html in this directory and ensure it is WCAG 2.1 AA Compliant and the web application is accessible with a screen reader. In the future I should include this requirement in the initial prompt.
 
 * [Opus 4.6](ringbuffer-opus4_6-wcag.html) (Medium effort).
 * [Sonnet 4.6](ringbuffer-Sonnet4-6-wcag.html)

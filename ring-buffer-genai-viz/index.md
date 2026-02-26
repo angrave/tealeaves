@@ -19,7 +19,7 @@ None of the html content was WCAG compliant, so later, in a new session I asked 
 
 Make a new file postfix '-wcag.html' of the existing file. Take the current html in this directory and ensure it is WCAG 2.1 AA Compliant and the web application is accessible with a screen reader.
 
-* [Opus 4.6](ringbuffer-opus4_6-wcag.html.html) (Medium effort).
-* [Sonnet 4.6](ringbuffer-Sonnet4-6-wcag.html.html)
-* [ChatGPT 5.2 Instant](ringbuffer-chatgpt5_2instant-wcag.html.html)
-* [Qwen3-Coder-Next](ringbuffer-Qwen3-Coder-next-wcag.html.html)
+* [Opus 4.6](ringbuffer-opus4_6-wcag.html) (Medium effort).
+* [Sonnet 4.6](ringbuffer-Sonnet4-6-wcag.html)
+* [ChatGPT 5.2 Instant](ringbuffer-chatgpt5_2instant-wcag.html)
+* [Qwen3-Coder-Next](ringbuffer-Qwen3-Coder-next-wcag.html)

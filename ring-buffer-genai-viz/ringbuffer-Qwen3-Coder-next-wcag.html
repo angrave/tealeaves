@@ -1,0 +1,1010 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fixed-Size Ring Buffer with Semaphores</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        h1 {
+            text-align: center;
+            color: white;
+            margin-bottom: 20px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .controls {
+            background: white;
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .control-group {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .speed-control {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .speed-control input[type="range"] {
+            width: 150px;
+        }
+
+        button {
+            padding: 12px 30px;
+            font-size: 16px;
+            font-weight: bold;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(0,0,0,0.3);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        button:focus-visible {
+            outline: 3px solid #667eea;
+            outline-offset: 2px;
+        }
+
+        #start-btn {
+            background: linear-gradient(135deg, #4CAF50, #45a049);
+            color: white;
+        }
+
+        #stop-btn {
+            background: linear-gradient(135deg, #f44336, #da190b);
+            color: white;
+        }
+
+        .main-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .buffers-container {
+            display: flex;
+            justify-content: center;
+            gap: 60px;
+            flex-wrap: wrap;
+        }
+
+        .buffer-section {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .buffer-section h2 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 20px;
+        }
+
+        .circle-container {
+            position: relative;
+            width: 350px;
+            height: 350px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .ring-buffer {
+            position: absolute;
+            width: 300px;
+            height: 300px;
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .buffer-slot {
+            position: absolute;
+            width: 60px;
+            height: 60px;
+            border: 3px solid #667eea;
+            border-radius: 10px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-weight: bold;
+            font-size: 18px;
+            background: #f0f0f0;
+            transition: all 0.3s;
+        }
+
+        .buffer-slot.filled {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            border-color: #5566d0;
+        }
+
+        .buffer-pointer {
+            position: absolute;
+            font-weight: bold;
+            font-size: 20px;
+            padding: 5px 12px;
+            border-radius: 8px;
+            background: white;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            z-index: 10;
+            transition: all 0.5s;
+        }
+
+        .write-pointer {
+            color: #4CAF50;
+        }
+
+        .read-pointer {
+            color: #f44336;
+        }
+
+        .producers, .consumers {
+            display: flex;
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .producer, .consumer {
+            background: white;
+            border-radius: 10px;
+            padding: 15px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+            text-align: center;
+            min-width: 120px;
+            transition: all 0.3s;
+        }
+
+        .producer {
+            border: 3px solid #4CAF50;
+        }
+
+        .consumer {
+            border: 3px solid #f44336;
+        }
+
+        .producer.active, .consumer.active {
+            box-shadow: 0 0 20px rgba(76, 175, 80, 0.5);
+            transform: scale(1.05);
+        }
+
+        .producer.active {
+            border-color: #4CAF50;
+        }
+
+        .consumer.active {
+            border-color: #f44336;
+        }
+
+        .producer-label, .consumer-label {
+            font-weight: bold;
+            color: #333;
+        }
+
+        .producer-status, .consumer-status {
+            font-weight: bold;
+            margin-top: 10px;
+            font-size: 14px;
+        }
+
+        .producer .item, .consumer .item {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin: 10px auto;
+            font-weight: bold;
+            font-size: 16px;
+        }
+
+        .producer .item {
+            background: linear-gradient(135deg, #4CAF50, #45a049);
+            color: white;
+        }
+
+        .consumer .item {
+            background: linear-gradient(135deg, #f44336, #da190b);
+            color: white;
+        }
+
+        .semaphore-info {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .semaphore-info h2 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 20px;
+        }
+
+        .semaphores {
+            display: flex;
+            justify-content: space-around;
+            flex-wrap: wrap;
+            gap: 30px;
+        }
+
+        .semaphore {
+            text-align: center;
+            min-width: 150px;
+        }
+
+        .semaphore-icon {
+            font-size: 56px;
+            margin-bottom: 15px;
+            display: block;
+        }
+
+        .semaphore-value {
+            font-size: 36px;
+            font-weight: bold;
+            color: #667eea;
+            margin-bottom: 8px;
+        }
+
+        .semaphore-label {
+            color: #666;
+            font-size: 14px;
+            font-weight: bold;
+        }
+
+        .mutex-section {
+            display: flex;
+            justify-content: center;
+            margin-top: 25px;
+        }
+
+        .mutex-lock {
+            text-align: center;
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            min-width: 130px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+            transition: all 0.3s;
+        }
+
+        .mutex-icon {
+            font-size: 50px;
+            display: block;
+            margin-bottom: 10px;
+        }
+
+        .mutex-locked .mutex-icon {
+            color: #f44336;
+        }
+
+        .mutex-unlocked .mutex-icon {
+            color: #4CAF50;
+        }
+
+        .mutex-label {
+            font-weight: bold;
+            color: #333;
+        }
+
+        .mutex-locked .mutex-label {
+            color: #f44336;
+            font-weight: bold;
+        }
+
+        .mutex-unlocked .mutex-label {
+            color: #4CAF50;
+            font-weight: bold;
+        }
+
+        .log-panel {
+            background: white;
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .log-panel h2 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 15px;
+        }
+
+        .log-container {
+            max-height: 150px;
+            overflow-y: auto;
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 15px;
+        }
+
+        .log-entry {
+            padding: 8px;
+            margin-bottom: 6px;
+            border-radius: 5px;
+            font-size: 13px;
+            font-family: 'Courier New', monospace;
+        }
+
+        .log-info {
+            background: #e3f2fd;
+            border-left: 4px solid #2196F3;
+            padding-left: 10px;
+        }
+
+        .log-success {
+            background: #e8f5e9;
+            border-left: 4px solid #4CAF50;
+            padding-left: 10px;
+        }
+
+        .log-warning {
+            background: #fff3e0;
+            border-left: 4px solid #ff9800;
+            padding-left: 10px;
+        }
+
+        .log-error {
+            background: #ffebee;
+            border-left: 4px solid #f44336;
+            padding-left: 10px;
+        }
+
+        .visually-hidden {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+
+        .buffer-slot:focus-visible,
+        .buffer-pointer:focus-visible {
+            outline: 3px solid #667eea;
+            outline-offset: 2px;
+        }
+
+        input[type="checkbox"]:focus-visible {
+            outline: 3px solid #667eea;
+            outline-offset: 2px;
+        }
+
+        input[type="range"]:focus-visible {
+            outline: 3px solid #667eea;
+            outline-offset: 2px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Fixed-Size Ring Buffer with Counting Semaphores</h1>
+    
+    <div class="controls" role="region" aria-labelledby="controls-heading">
+        <h2 id="controls-heading" class="visually-hidden">Simulation Controls</h2>
+        <div class="control-group">
+            <div class="checkbox-group">
+                <input type="checkbox" id="mutex-check" aria-checked="false">
+                <label for="mutex-check">Use Mutex Lock</label>
+            </div>
+            
+            <div class="speed-control">
+                <label for="speed-range">Speed:</label>
+                <input type="range" id="speed-range" min="100" max="2000" value="800" step="100" aria-valuemin="100" aria-valuemax="2000" aria-valuenow="800">
+                <span id="speed-value">800ms</span>
+            </div>
+            
+            <button id="start-btn" aria-label="Start the simulation">Start Simulation</button>
+            <button id="stop-btn" disabled aria-label="Stop the simulation">Stop</button>
+        </div>
+    </div>
+    
+    <div class="main-container">
+        <div class="buffers-container">
+            <div class="buffer-section" role="region" aria-labelledby="buffer-heading">
+                <h2 id="buffer-heading">Buffer (Size: 5)</h2>
+                <div class="circle-container" role="img" aria-label="Visual representation of the ring buffer with write and read pointers">
+                    <div class="ring-buffer" id="buffer-container" role="list" aria-label="Buffer slots">
+                        <div class="buffer-slot empty" data-index="0" style="top: 20px; left: 120px;" role="listitem" aria-label="Buffer slot 0: empty" tabindex="0"><span aria-hidden="true">-</span><span class="visually-hidden" aria-live="polite"></span></div>
+                        <div class="buffer-slot empty" data-index="1" style="top: 80px; left: 200px;" role="listitem" aria-label="Buffer slot 1: empty" tabindex="0"><span aria-hidden="true">-</span><span class="visually-hidden" aria-live="polite"></span></div>
+                        <div class="buffer-slot empty" data-index="2" style="top: 200px; left: 200px;" role="listitem" aria-label="Buffer slot 2: empty" tabindex="0"><span aria-hidden="true">-</span><span class="visually-hidden" aria-live="polite"></span></div>
+                        <div class="buffer-slot empty" data-index="3" style="top: 260px; left: 120px;" role="listitem" aria-label="Buffer slot 3: empty" tabindex="0"><span aria-hidden="true">-</span><span class="visually-hidden" aria-live="polite"></span></div>
+                        <div class="buffer-slot empty" data-index="4" style="top: 200px; left: 40px;" role="listitem" aria-label="Buffer slot 4: empty" tabindex="0"><span aria-hidden="true">-</span><span class="visually-hidden" aria-live="polite"></span></div>
+                        <div class="buffer-slot empty" data-index="5" style="top: 80px; left: 40px;" role="listitem" aria-label="Buffer slot 5: empty" tabindex="0"><span aria-hidden="true">-</span><span class="visually-hidden" aria-live="polite"></span></div>
+                    </div>
+                    <div class="buffer-pointer write-pointer" id="write-pointer" style="top: -25px; left: 125px;" role="img" aria-label="Write pointer" tabindex="0">W</div>
+                    <div class="buffer-pointer read-pointer" id="read-pointer" style="bottom: -25px; left: 125px;" role="img" aria-label="Read pointer" tabindex="0">R</div>
+                </div>
+                <div style="display: flex; justify-content: space-around; margin-top: 25px; font-weight: bold;" role="status" aria-label="Buffer indices">
+                    <div>Write: <span id="write-index" style="color: #4CAF50;" aria-live="polite">0</span></div>
+                    <div>Read: <span id="read-index" style="color: #f44336;" aria-live="polite">0</span></div>
+                </div>
+            </div>
+            
+            <div class="semaphore-info" role="region" aria-labelledby="semaphores-heading">
+                <h2 id="semaphores-heading">Counting Semaphores</h2>
+                <div class="semaphores" role="list" aria-label="Semaphore values">
+                    <div class="semaphore" role="listitem">
+                        <span class="semaphore-icon" aria-hidden="true">📦</span>
+                        <div class="semaphore-value" id="spaces-count" aria-live="polite">5</div>
+                        <div class="semaphore-label">Available Spaces</div>
+                    </div>
+                    <div class="semaphore" role="listitem">
+                        <span class="semaphore-icon" aria-hidden="true">📦</span>
+                        <div class="semaphore-value" id="items-count" aria-live="polite">0</div>
+                        <div class="semaphore-label">Items in Buffer</div>
+                    </div>
+                </div>
+                <div class="mutex-section" role="region" aria-labelledby="mutex-aria-label">
+                    <div class="mutex-lock" id="mutex-lock">
+                        <span class="mutex-icon" id="mutex-icon" aria-hidden="true">🔓</span>
+                        <div class="mutex-label" id="mutex-label">Unlocked</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="buffers-container">
+            <div class="buffer-section" role="region" aria-labelledby="producers-heading">
+                <h2 id="producers-heading">Producers</h2>
+                <div class="producers" id="producers-container" role="list" aria-label="List of producers">
+                    <div class="producer" id="producer-0" role="listitem">
+                        <div class="producer-label">Producer 0</div>
+                        <div class="producer-status" aria-live="polite">Waiting</div>
+                        <div class="item" id="producer-0-item" style="display: none;" aria-label="Item to be produced">1</div>
+                    </div>
+                    <div class="producer" id="producer-1" role="listitem">
+                        <div class="producer-label">Producer 1</div>
+                        <div class="producer-status" aria-live="polite">Waiting</div>
+                        <div class="item" id="producer-1-item" style="display: none;" aria-label="Item to be produced">1</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="buffer-section" role="region" aria-labelledby="consumers-heading">
+                <h2 id="consumers-heading">Consumers</h2>
+                <div class="consumers" id="consumers-container" role="list" aria-label="List of consumers">
+                    <div class="consumer" id="consumer-0" role="listitem">
+                        <div class="consumer-label">Consumer 0</div>
+                        <div class="consumer-status" aria-live="polite">Waiting</div>
+                        <div class="item" id="consumer-0-item" style="display: none;" aria-label="Item consumed">-</div>
+                    </div>
+                    <div class="consumer" id="consumer-1" role="listitem">
+                        <div class="consumer-label">Consumer 1</div>
+                        <div class="consumer-status" aria-live="polite">Waiting</div>
+                        <div class="item" id="consumer-1-item" style="display: none;" aria-label="Item consumed">-</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="log-panel" role="region" aria-labelledby="log-heading">
+            <h2 id="log-heading">Operation Log</h2>
+            <div class="log-container" id="log-container" role="log" aria-live="polite" aria-label="Recent operations log">
+                <div class="log-entry log-info">Initialize ring buffer with size 5</div>
+                <div class="log-entry log-info">Set semaphores: spaces=5, items=0</div>
+                <div class="log-entry log-info">Ready to start simulation</div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        class RingBuffer {
+            constructor(size) {
+                this.size = size;
+                this.buffer = new Array(size).fill(null);
+                this.writeIndex = 0;
+                this.readIndex = 0;
+                this.count = 0;
+                this.spaces = size;
+                this.mutexLocked = false;
+            }
+
+            log(message, type = 'info') {
+                const logContainer = document.getElementById('log-container');
+                const entry = document.createElement('div');
+                entry.className = `log-entry log-${type}`;
+                const timestamp = new Date().toLocaleTimeString();
+                entry.textContent = `[${timestamp}] ${message}`;
+                logContainer.appendChild(entry);
+                logContainer.scrollTop = logContainer.scrollHeight;
+                
+                if (logContainer.children.length > 50) {
+                    logContainer.removeChild(logContainer.firstChild);
+                }
+                
+                const screenReaderMsg = document.createElement('div');
+                screenReaderMsg.className = 'visually-hidden';
+                screenReaderMsg.setAttribute('aria-live', 'assertive');
+                screenReaderMsg.textContent = message;
+                logContainer.appendChild(screenReaderMsg);
+            }
+
+            produce(item) {
+                if (this.spaces > 0) {
+                    this.buffer[this.writeIndex] = item;
+                    this.writeIndex = (this.writeIndex + 1) % this.size;
+                    this.count++;
+                    this.spaces--;
+                    this.log(`Produced item: ${item}`, 'success');
+                    return { success: true, item };
+                }
+                this.log('Buffer full - cannot produce', 'warning');
+                return { success: false, item };
+            }
+
+            consume() {
+                if (this.count > 0) {
+                    const item = this.buffer[this.readIndex];
+                    this.buffer[this.readIndex] = null;
+                    this.readIndex = (this.readIndex + 1) % this.size;
+                    this.count--;
+                    this.spaces++;
+                    this.log(`Consumed item: ${item}`, 'warning');
+                    return { success: true, item };
+                }
+                this.log('Buffer empty - cannot consume', 'warning');
+                return { success: false, item: null };
+            }
+
+            acquireMutex() {
+                if (!this.mutexLocked) {
+                    this.mutexLocked = true;
+                    this.updateMutexUI(true);
+                    this.log('Mutex acquired', 'info');
+                    return true;
+                }
+                return false;
+            }
+
+            releaseMutex() {
+                this.mutexLocked = false;
+                this.updateMutexUI(false);
+                this.log('Mutex released', 'info');
+            }
+
+            updateMutexUI(locked) {
+                const mutexIcon = document.getElementById('mutex-icon');
+                const mutexLabel = document.getElementById('mutex-label');
+                const mutexLock = document.querySelector('.mutex-lock');
+                
+                if (locked) {
+                    mutexIcon.textContent = '🔒';
+                    mutexLabel.textContent = 'Locked';
+                    mutexLabel.classList.add('mutex-locked');
+                    mutexLabel.classList.remove('mutex-unlocked');
+                    mutexLock.className = 'mutex-lock mutex-locked';
+                } else {
+                    mutexIcon.textContent = '🔓';
+                    mutexLabel.textContent = 'Unlocked';
+                    mutexLock.className = 'mutex-lock mutex-unlocked';
+                }
+            }
+        }
+
+        class Producer {
+            constructor(id, buffer) {
+                this.id = id;
+                this.buffer = buffer;
+                this.itemValue = id + 1;
+                this.element = document.getElementById(`producer-${id}`);
+                this.itemElement = document.getElementById(`producer-${id}-item`);
+                this.statusElement = this.element.querySelector('.producer-status');
+                this.active = false;
+            }
+
+            async produce() {
+                if (!this.active) return;
+                
+                this.element.classList.add('active');
+                this.statusElement.textContent = 'Producing...';
+                this.statusElement.setAttribute('aria-live', 'polite');
+                this.itemElement.textContent = this.itemValue;
+                this.itemElement.style.display = 'flex';
+                
+                await new Promise(resolve => setTimeout(resolve, 300));
+                
+                const result = this.buffer.produce(this.itemValue);
+                
+                if (result.success) {
+                    this.itemValue++;
+                    this.statusElement.textContent = 'Waiting';
+                    await new Promise(resolve => setTimeout(resolve, 300));
+                    this.itemElement.style.display = 'none';
+                } else {
+                    this.statusElement.textContent = 'Buffer Full';
+                }
+                
+                this.element.classList.remove('active');
+                return result;
+            }
+
+            setActive(active) {
+                this.active = active;
+                if (active) {
+                    this.element.classList.add('active');
+                    this.statusElement.textContent = 'Waiting';
+                } else {
+                    this.element.classList.remove('active');
+                    this.statusElement.textContent = 'Stopped';
+                }
+            }
+        }
+
+        class Consumer {
+            constructor(id, buffer) {
+                this.id = id;
+                this.buffer = buffer;
+                this.element = document.getElementById(`consumer-${id}`);
+                this.itemElement = document.getElementById(`consumer-${id}-item`);
+                this.statusElement = this.element.querySelector('.consumer-status');
+                this.active = false;
+                this.consumedCount = 0;
+            }
+
+            async consume() {
+                if (!this.active) return;
+                
+                this.element.classList.add('active');
+                this.statusElement.textContent = 'Consuming...';
+                this.statusElement.setAttribute('aria-live', 'polite');
+                
+                await new Promise(resolve => setTimeout(resolve, 300));
+                
+                const result = this.buffer.consume();
+                
+                if (result.success) {
+                    this.itemElement.textContent = result.item;
+                    this.itemElement.style.display = 'flex';
+                    this.consumedCount++;
+                    this.statusElement.textContent = 'Waiting';
+                    await new Promise(resolve => setTimeout(resolve, 300));
+                    this.itemElement.style.display = 'none';
+                } else {
+                    this.statusElement.textContent = 'Buffer Empty';
+                }
+                
+                this.element.classList.remove('active');
+                return result;
+            }
+
+            setActive(active) {
+                this.active = active;
+                if (active) {
+                    this.element.classList.add('active');
+                    this.statusElement.textContent = 'Waiting';
+                } else {
+                    this.element.classList.remove('active');
+                    this.statusElement.textContent = 'Stopped';
+                }
+            }
+        }
+
+        class Simulation {
+            constructor() {
+                this.buffer = new RingBuffer(5);
+                this.producers = [
+                    new Producer(0, this.buffer),
+                    new Producer(1, this.buffer)
+                ];
+                this.consumers = [
+                    new Consumer(0, this.buffer),
+                    new Consumer(1, this.buffer)
+                ];
+                this.intervalId = null;
+                this.speed = 800;
+                this.mutexEnabled = false;
+                this.running = false;
+                this.lastFocusedElement = null;
+            }
+
+            updateUI() {
+                for (let i = 0; i < this.buffer.size; i++) {
+                    const slot = document.querySelector(`[data-index="${i}"]`);
+                    if (slot) {
+                        if (this.buffer.buffer[i] !== null) {
+                            slot.setAttribute('aria-label', `Buffer slot ${i}: filled with value ${this.buffer.buffer[i]}`);
+                            slot.innerHTML = `<span aria-hidden="true">${this.buffer.buffer[i]}</span><span class="visually-hidden" aria-live="polite">Slot ${i} now contains ${this.buffer.buffer[i]}</span>`;
+                            slot.className = 'buffer-slot filled';
+                        } else {
+                            slot.setAttribute('aria-label', `Buffer slot ${i}: empty`);
+                            slot.innerHTML = `<span aria-hidden="true">-</span><span class="visually-hidden" aria-live="polite">Slot ${i} is now empty</span>`;
+                            slot.className = 'buffer-slot empty';
+                        }
+                    }
+                }
+
+                document.getElementById('write-index').textContent = this.buffer.writeIndex;
+                document.getElementById('read-index').textContent = this.buffer.readIndex;
+                document.getElementById('spaces-count').textContent = this.buffer.spaces;
+                document.getElementById('items-count').textContent = this.buffer.count;
+
+                const writeSlot = document.querySelector(`[data-index="${this.buffer.writeIndex}"]`);
+                const readSlot = document.querySelector(`[data-index="${this.buffer.readIndex}"]`);
+                
+                if (writeSlot) {
+                    const rect = writeSlot.getBoundingClientRect();
+                    const containerRect = document.querySelector('.circle-container').getBoundingClientRect();
+                    const top = rect.top - containerRect.top - 25;
+                    const left = rect.left - containerRect.left + (rect.width / 2) - 15;
+                    document.getElementById('write-pointer').style.top = `${top}px`;
+                    document.getElementById('write-pointer').style.left = `${left}px`;
+                }
+                
+                if (readSlot) {
+                    const rect = readSlot.getBoundingClientRect();
+                    const containerRect = document.querySelector('.circle-container').getBoundingClientRect();
+                    const bottom = containerRect.height - (rect.bottom - containerRect.top) - 25;
+                    const left = rect.left - containerRect.left + (rect.width / 2) - 15;
+                    document.getElementById('read-pointer').style.bottom = `${bottom}px`;
+                    document.getElementById('read-pointer').style.left = `${left}px`;
+                }
+
+                if (this.buffer.spaces === 0) {
+                    document.getElementById('spaces-count').style.color = '#f44336';
+                    document.getElementById('spaces-count').setAttribute('aria-label', 'Warning: No spaces available');
+                } else {
+                    document.getElementById('spaces-count').style.color = '#667eea';
+                    document.getElementById('spaces-count').removeAttribute('aria-label');
+                }
+
+                if (this.buffer.count === 0) {
+                    document.getElementById('items-count').style.color = '#f44336';
+                    document.getElementById('items-count').setAttribute('aria-label', 'Warning: No items in buffer');
+                } else {
+                    document.getElementById('items-count').style.color = '#667eea';
+                    document.getElementById('items-count').removeAttribute('aria-label');
+                }
+            }
+
+            async runProducer(producer) {
+                if (this.buffer.spaces > 0) {
+                    await producer.produce();
+                } else {
+                    producer.statusElement.textContent = 'Buffer Full';
+                    producer.statusElement.setAttribute('aria-live', 'polite');
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    producer.statusElement.textContent = 'Waiting';
+                }
+            }
+
+            async runConsumer(consumer) {
+                if (this.buffer.count > 0) {
+                    await consumer.consume();
+                } else {
+                    consumer.statusElement.textContent = 'Buffer Empty';
+                    consumer.statusElement.setAttribute('aria-live', 'polite');
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    consumer.statusElement.textContent = 'Waiting';
+                }
+            }
+
+            async simStep() {
+                if (!this.running) return;
+
+                this.updateUI();
+
+                const producerAction = Math.random() < 0.6;
+                const consumerAction = Math.random() < 0.6;
+
+                if (producerAction) {
+                    const randomProducer = this.producers[Math.floor(Math.random() * this.producers.length)];
+                    if (this.mutexEnabled) {
+                        const acquired = this.buffer.acquireMutex();
+                        if (acquired) {
+                            await this.runProducer(randomProducer);
+                            this.buffer.releaseMutex();
+                        } else {
+                            randomProducer.statusElement.textContent = 'Mutex Busy';
+                            randomProducer.statusElement.setAttribute('aria-live', 'polite');
+                            await new Promise(resolve => setTimeout(resolve, 300));
+                            randomProducer.statusElement.textContent = 'Waiting';
+                        }
+                    } else {
+                        await this.runProducer(randomProducer);
+                    }
+                }
+
+                if (consumerAction) {
+                    const randomConsumer = this.consumers[Math.floor(Math.random() * this.consumers.length)];
+                    if (this.mutexEnabled) {
+                        const acquired = this.buffer.acquireMutex();
+                        if (acquired) {
+                            await this.runConsumer(randomConsumer);
+                            this.buffer.releaseMutex();
+                        } else {
+                            randomConsumer.statusElement.textContent = 'Mutex Busy';
+                            randomConsumer.statusElement.setAttribute('aria-live', 'polite');
+                            await new Promise(resolve => setTimeout(resolve, 300));
+                            randomConsumer.statusElement.textContent = 'Waiting';
+                        }
+                    } else {
+                        await this.runConsumer(randomConsumer);
+                    }
+                }
+
+                this.updateUI();
+            }
+
+            start() {
+                if (this.running) return;
+                
+                this.running = true;
+                this.producers.forEach(p => p.setActive(true));
+                this.consumers.forEach(c => c.setActive(true));
+                
+                document.getElementById('start-btn').disabled = true;
+                document.getElementById('start-btn').setAttribute('aria-disabled', 'true');
+                document.getElementById('stop-btn').disabled = false;
+                document.getElementById('stop-btn').setAttribute('aria-disabled', 'false');
+                
+                this.buffer.log('Simulation started', 'info');
+                this.simStepLoop();
+            }
+
+            simStepLoop() {
+                if (!this.running) return;
+                
+                setTimeout(() => {
+                    this.simStep();
+                    this.simStepLoop();
+                }, this.speed);
+            }
+
+            stop() {
+                if (!this.running) return;
+                
+                this.running = false;
+                
+                this.producers.forEach(p => p.setActive(false));
+                this.consumers.forEach(c => c.setActive(false));
+                
+                document.getElementById('start-btn').disabled = false;
+                document.getElementById('start-btn').setAttribute('aria-disabled', 'false');
+                document.getElementById('stop-btn').disabled = true;
+                document.getElementById('stop-btn').setAttribute('aria-disabled', 'true');
+                
+                this.buffer.log('Simulation stopped', 'warning');
+            }
+
+            setSpeed(speed) {
+                this.speed = 2100 - speed;
+                document.getElementById('speed-value').textContent = speed + 'ms';
+                document.getElementById('speed-range').setAttribute('aria-valuenow', speed.toString());
+            }
+        }
+
+        const sim = new Simulation();
+
+        document.getElementById('speed-range').addEventListener('input', (e) => {
+            const speedValue = parseInt(e.target.value);
+            sim.setSpeed(speedValue);
+        });
+
+        document.getElementById('mutex-check').addEventListener('change', (e) => {
+            sim.mutexEnabled = e.target.checked;
+            document.getElementById('mutex-check').setAttribute('aria-checked', e.target.checked.toString());
+            if (e.target.checked) {
+                sim.buffer.log('Mutex lock enabled', 'info');
+            } else {
+                sim.buffer.log('Mutex lock disabled', 'info');
+            }
+        });
+
+        document.getElementById('start-btn').addEventListener('click', () => {
+            sim.lastFocusedElement = document.activeElement;
+            sim.start();
+            sim.updateUI();
+        });
+
+        document.getElementById('stop-btn').addEventListener('click', () => {
+            sim.stop();
+            if (sim.lastFocusedElement) {
+                sim.lastFocusedElement.focus();
+            }
+        });
+
+        document.getElementById('start-btn').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                sim.lastFocusedElement = document.activeElement;
+                sim.start();
+            }
+        });
+
+        document.getElementById('stop-btn').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                sim.stop();
+                if (sim.lastFocusedElement) {
+                    sim.lastFocusedElement.focus();
+                }
+            }
+        });
+
+        document.getElementById('speed-range').addEventListener('keydown', (e) => {
+            const range = e.target;
+            if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
+                e.preventDefault();
+                const min = parseInt(range.min);
+                const max = parseInt(range.max);
+                const step = parseInt(range.step);
+                const current = parseInt(range.value);
+                const newValue = Math.min(max, current + step);
+                range.value = newValue;
+                sim.setSpeed(newValue);
+            } else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
+                e.preventDefault();
+                const min = parseInt(range.min);
+                const max = parseInt(range.max);
+                const step = parseInt(range.step);
+                const current = parseInt(range.value);
+                const newValue = Math.max(min, current - step);
+                range.value = newValue;
+                sim.setSpeed(newValue);
+            }
+        });
+
+        window.addEventListener('resize', () => {
+            sim.updateUI();
+        });
+
+        document.querySelectorAll('.buffer-slot, .buffer-pointer').forEach(element => {
+            element.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    element.focus();
+                }
+            });
+        });
+
+        sim.updateUI();
+    </script>
+</body>
+</html>

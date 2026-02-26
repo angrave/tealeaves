@@ -1,0 +1,1234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ring Buffer — Counting Semaphores Demo</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /* ── ACCESSIBILITY UTILITIES ── */
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    .skip-link {
+      position: absolute;
+      top: -40px;
+      left: 0;
+      background: #a78bfa;
+      color: #0f1117;
+      padding: 8px 16px;
+      border-radius: 0 0 8px 0;
+      font-weight: 700;
+      font-size: 0.9em;
+      z-index: 9999;
+      text-decoration: none;
+      transition: top 0.2s;
+    }
+    .skip-link:focus {
+      top: 0;
+    }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      min-height: 100vh;
+      padding: 16px;
+    }
+
+    h1 {
+      text-align: center;
+      font-size: 1.6em;
+      color: #a78bfa;
+      margin-bottom: 3px;
+    }
+    .subtitle {
+      text-align: center;
+      color: #94a3b8;
+      font-size: 0.85em;
+      margin-bottom: 16px;
+    }
+
+    /* ── SETTINGS BAR ── */
+    .settings-bar {
+      display: flex;
+      gap: 18px;
+      justify-content: center;
+      align-items: center;
+      flex-wrap: wrap;
+      background: #1e2030;
+      border-radius: 10px;
+      padding: 10px 18px;
+      margin-bottom: 14px;
+      border: 1px solid #2d3148;
+    }
+    .setting-item { display: flex; align-items: center; gap: 8px; font-size: 0.85em; }
+    .setting-item label { color: #94a3b8; white-space: nowrap; }
+    select, input[type="range"] {
+      background: #0f3460;
+      color: #e0e0e0;
+      border: 1px solid #7a8fa8;
+      border-radius: 6px;
+      padding: 3px 7px;
+      font-size: 0.85em;
+    }
+    input[type="range"] { width: 100px; padding: 0; }
+    input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-color: #a78bfa; }
+    .speed-label { color: #7dd3fc; font-family: monospace; min-width: 42px; }
+
+    /* ── FOCUS STYLES ── */
+    button:focus-visible,
+    select:focus-visible,
+    input[type="range"]:focus-visible,
+    input[type="checkbox"]:focus-visible {
+      outline: 3px solid #a78bfa;
+      outline-offset: 2px;
+    }
+
+    /* ── MAIN 3-COLUMN LAYOUT ── */
+    .main-layout {
+      display: grid;
+      grid-template-columns: 240px 1fr 240px;
+      gap: 12px;
+      margin-bottom: 12px;
+      align-items: start;
+    }
+
+    .panel {
+      background: #1e2030;
+      border-radius: 12px;
+      padding: 14px;
+      border: 1px solid #2d3148;
+    }
+    h2.panel-title {
+      font-size: 0.72em;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: #94a3b8;
+      margin-bottom: 10px;
+      font-weight: normal;
+    }
+
+    /* ── PSEUDOCODE ── */
+    .code-block {
+      font-family: 'Courier New', Consolas, monospace;
+      font-size: 0.82em;
+      line-height: 1.9;
+    }
+    .code-line {
+      padding: 1px 7px;
+      border-radius: 5px;
+      transition: background 0.25s, color 0.25s, border-left 0.25s;
+      border-left: 3px solid transparent;
+      white-space: nowrap;
+    }
+    .code-line.active {
+      background: #312e81;
+      border-left-color: #818cf8;
+      color: #e0e7ff;
+    }
+    .code-line.blocked {
+      background: #450a0a;
+      border-left-color: #ef4444;
+      color: #fca5a5;
+      animation: blink 0.9s ease-in-out infinite;
+    }
+    .code-line.dimmed { opacity: 0.55; }
+
+    .ck { color: #c084fc; }   /* keyword */
+    .cf { color: #38bdf8; }   /* function */
+    .cv { color: #4ade80; }   /* variable */
+    .cn { color: #fb923c; }   /* number/const */
+    .cc { color: #94a3b8; font-style: italic; }  /* comment */
+
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.55} }
+
+    /* ── REDUCED MOTION ── */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+      .code-line.blocked {
+        animation: none;
+      }
+      .blocked-thread {
+        animation: none;
+      }
+    }
+
+    /* ── BLOCKED QUEUE ── */
+    .blocked-section { margin-top: 12px; }
+    .blocked-label { font-size: 0.7em; color: #94a3b8; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 1px; }
+    .blocked-list {
+      min-height: 22px;
+      background: #0a0c12;
+      border-radius: 6px;
+      padding: 4px;
+    }
+    .blocked-thread {
+      background: #7f1d1d;
+      color: #fca5a5;
+      border-radius: 4px;
+      padding: 2px 8px;
+      font-size: 0.72em;
+      font-family: monospace;
+      margin-bottom: 2px;
+      animation: blink 0.9s ease-in-out infinite;
+      border-left: 3px solid #ef4444;
+    }
+
+    /* ── SEMAPHORE WIDGETS ── */
+    .semaphores-section {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .sem-widget {
+      flex: 1;
+      background: #141825;
+      border-radius: 10px;
+      padding: 10px 8px;
+      text-align: center;
+      border: 1px solid #2d3148;
+      position: relative;
+    }
+    .sem-name {
+      font-family: monospace;
+      font-size: 0.78em;
+      color: #94a3b8;
+      margin-bottom: 4px;
+    }
+    .sem-value {
+      font-size: 2.4em;
+      font-weight: 900;
+      font-family: monospace;
+      line-height: 1;
+      transition: transform 0.2s, color 0.3s;
+    }
+    .sem-value.bump { transform: scale(1.35); }
+    .sem-desc { font-size: 0.65em; color: #94a3b8; margin: 3px 0 6px; }
+    .sem-tokens {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 3px;
+      justify-content: center;
+      min-height: 14px;
+    }
+    .sem-token {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      transition: all 0.3s;
+    }
+    .sem-spaces .sem-value { color: #22c55e; }
+    .sem-spaces .sem-value.zero { color: #ef4444; }
+    .sem-spaces .sem-token { background: #22c55e; box-shadow: 0 0 4px #22c55e66; }
+    .sem-items  .sem-value { color: #38bdf8; }
+    .sem-items  .sem-value.zero { color: #ef4444; }
+    .sem-items  .sem-token { background: #38bdf8; box-shadow: 0 0 4px #38bdf866; }
+
+    .sem-op-hint {
+      font-size: 0.6em;
+      color: #94a3b8;
+      margin-top: 5px;
+      font-family: monospace;
+    }
+
+    /* ── SEM FORMULA ── */
+    .sem-formula {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.65em;
+      color: #94a3b8;
+      font-family: monospace;
+      padding: 0 4px;
+    }
+    .sem-formula .sep { color: #94a3b8; }
+
+    /* ── MUTEX ── */
+    .mutex-widget {
+      background: #141825;
+      border-radius: 10px;
+      padding: 10px 12px;
+      text-align: center;
+      margin-bottom: 12px;
+      border: 1px solid #2d3148;
+      transition: border-color 0.3s;
+    }
+    .mutex-widget.locked-state { border-color: #ef4444; }
+    .mutex-title { font-size: 0.7em; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+    .mutex-icon { font-size: 1.6em; transition: all 0.3s; }
+    .mutex-status-text { font-family: monospace; font-size: 0.85em; font-weight: bold; transition: color 0.3s; }
+    .mutex-status-text.unlocked { color: #22c55e; }
+    .mutex-status-text.locked   { color: #ef4444; }
+    .mutex-status-text.disabled { color: #94a3b8; }
+    .mutex-owner { font-size: 0.7em; color: #94a3b8; font-family: monospace; min-height: 14px; margin-top: 2px; }
+
+    /* ── BUFFER ── */
+    .buffer-title {
+      font-size: 0.72em;
+      color: #94a3b8;
+      text-align: center;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    /* Fill level bar */
+    .fill-bar-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .fill-bar-label { font-size: 0.7em; color: #94a3b8; white-space: nowrap; }
+    .fill-bar-outer {
+      flex: 1;
+      height: 8px;
+      background: #0a0c12;
+      border-radius: 4px;
+      overflow: hidden;
+      border: 1px solid #2d3148;
+    }
+    .fill-bar-inner {
+      height: 100%;
+      background: linear-gradient(90deg, #1e40af, #38bdf8);
+      border-radius: 4px;
+      transition: width 0.4s ease;
+    }
+    .fill-bar-pct { font-size: 0.7em; color: #38bdf8; font-family: monospace; min-width: 36px; text-align: right; }
+
+    .buffer-cells {
+      display: flex;
+      gap: 5px;
+      justify-content: center;
+      flex-wrap: wrap;
+      padding: 28px 0 10px;
+    }
+    .buf-cell {
+      width: 54px;
+      height: 54px;
+      border: 2px solid #2d3148;
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      font-size: 1.05em;
+      position: relative;
+      transition: all 0.35s ease;
+      background: #0f1117;
+      font-family: monospace;
+    }
+    .buf-cell .cell-idx {
+      position: absolute;
+      top: -20px;
+      font-size: 0.65em;
+      color: #64748b;
+      font-family: monospace;
+    }
+    .buf-cell.filled   { background: #1e3a5f; border-color: #3b82f6; color: #93c5fd; }
+    .buf-cell.writing  { background: #14532d; border-color: #22c55e; color: #86efac; transform: scale(1.12); box-shadow: 0 0 14px #22c55e55; }
+    .buf-cell.reading  { background: #451a03; border-color: #f59e0b; color: #fcd34d; transform: scale(1.12); box-shadow: 0 0 14px #f59e0b55; }
+
+    .ptr-row {
+      display: flex;
+      gap: 5px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .ptr-cell {
+      width: 54px;
+      height: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.68em;
+      font-weight: bold;
+      font-family: monospace;
+    }
+    .ptr-H    { color: #f59e0b; }
+    .ptr-T    { color: #22c55e; }
+    .ptr-HT   { color: #a78bfa; }
+
+    /* Ring indicator */
+    .ring-indicator {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      font-size: 0.68em;
+      color: #64748b;
+      margin-top: 8px;
+      font-family: monospace;
+    }
+    .ring-arrow { font-size: 1.1em; color: #64748b; }
+
+    /* ── LEGEND ── */
+    .legend {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      justify-content: center;
+      font-size: 0.72em;
+      color: #94a3b8;
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid #2d3148;
+    }
+    .legend-item { display: flex; align-items: center; gap: 5px; }
+    .legend-box { width: 14px; height: 14px; border-radius: 3px; }
+
+    /* ── CONTROLS ── */
+    .controls {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+    button {
+      padding: 9px 22px;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.9em;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.18s;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+    }
+    button:hover:not(:disabled) { filter: brightness(1.15); }
+    button:active:not(:disabled) { transform: scale(0.95); }
+    button:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    .btn-produce { background: #14532d; color: #86efac; border: 1px solid #22c55e; }
+    .btn-consume { background: #451a03; color: #fcd34d; border: 1px solid #f59e0b; }
+    .btn-auto    { background: #1e3a5f; color: #7dd3fc; border: 1px solid #38bdf8; }
+    .btn-auto.running { background: #7c2d12; color: #fdba74; border-color: #f97316; }
+    .btn-reset   { background: #1e2030; color: #94a3b8; border: 1px solid #334155; }
+
+    /* ── STATUS BAR ── */
+    .status-bar {
+      display: flex;
+      gap: 16px;
+      justify-content: center;
+      align-items: center;
+      flex-wrap: wrap;
+      background: #141825;
+      border-radius: 8px;
+      padding: 7px 14px;
+      margin-bottom: 10px;
+      font-size: 0.78em;
+      font-family: monospace;
+      border: 1px solid #2d3148;
+    }
+    .stat { color: #94a3b8; }
+    .stat span { color: #e2e8f0; }
+    .stat .ok  { color: #22c55e; }
+    .stat .warn { color: #ef4444; }
+
+    /* ── LOG ── */
+    .log-panel {
+      background: #080a10;
+      border-radius: 8px;
+      padding: 10px 12px;
+      height: 140px;
+      overflow-y: auto;
+      font-family: 'Courier New', monospace;
+      font-size: 0.78em;
+      border: 1px solid #1e2030;
+    }
+    .log-entry { padding: 1px 0; border-bottom: 1px solid #0f1117; line-height: 1.55; }
+    .log-t    { color: #64748b; margin-right: 7px; }
+    .log-entry.lp  { color: #86efac; }
+    .log-entry.lc  { color: #fcd34d; }
+    .log-entry.lb  { color: #fca5a5; }
+    .log-entry.lu  { color: #c4b5fd; }
+    .log-entry.li  { color: #94a3b8; }
+
+    /* ── RESPONSIVE ── */
+    @media (max-width: 820px) {
+      .main-layout { grid-template-columns: 1fr; }
+      .buf-cell { width: 40px; height: 40px; font-size: 0.85em; }
+      .ptr-cell { width: 40px; }
+    }
+  </style>
+</head>
+<body>
+
+<a href="#main-content" class="skip-link">Skip to main content</a>
+
+<header>
+  <h1>Ring Buffer with Counting Semaphores</h1>
+  <p class="subtitle">Fixed-size producer-consumer buffer &mdash; Systems Programming Interactive Demo</p>
+</header>
+
+<main id="main-content">
+
+<div id="ariaAnnounce" role="status" aria-live="polite" aria-atomic="true" class="sr-only"></div>
+
+<!-- SETTINGS -->
+<section aria-label="Demo settings" class="settings-bar">
+  <div class="setting-item">
+    <label for="bufSizeSelect">Buffer size N:</label>
+    <select id="bufSizeSelect">
+      <option value="4">4</option>
+      <option value="6">6</option>
+      <option value="8" selected>8</option>
+      <option value="10">10</option>
+    </select>
+  </div>
+  <div class="setting-item">
+    <label for="speedSlider">Step delay:</label>
+    <input type="range" id="speedSlider" min="150" max="1800" value="750" step="50">
+    <span class="speed-label" id="speedLabel">750ms</span>
+  </div>
+  <div class="setting-item">
+    <label for="mutexToggle">Mutex (multi-thread):</label>
+    <input type="checkbox" id="mutexToggle" aria-describedby="mutexDesc">
+    <span id="mutexDesc" class="sr-only">When enabled, shows mutex lock/unlock operations in pseudocode</span>
+  </div>
+  <div class="setting-item">
+    <label for="autoMode">Auto mode:</label>
+    <select id="autoMode">
+      <option value="none">Off</option>
+      <option value="produce">Producer only</option>
+      <option value="consume">Consumer only</option>
+      <option value="both">Both (random)</option>
+      <option value="fill">Fill then drain</option>
+    </select>
+  </div>
+</section>
+
+<!-- STATUS BAR -->
+<div class="status-bar" role="status" aria-live="polite" aria-label="Buffer status">
+  <div class="stat">Buffer: <span id="statFill">0</span> / <span id="statSize">8</span></div>
+  <div class="stat">spaces: <span id="statSpaces" class="ok">8</span></div>
+  <div class="stat">items: <span id="statItems">0</span></div>
+  <div class="stat">head: <span id="statHead">0</span></div>
+  <div class="stat">tail: <span id="statTail">0</span></div>
+  <div class="stat">ops: <span id="statOps">0</span></div>
+</div>
+
+<!-- MAIN LAYOUT -->
+<div class="main-layout">
+
+  <!-- PRODUCER PANEL -->
+  <section class="panel" id="producerPanel" aria-labelledby="producerTitle">
+    <h2 class="panel-title" id="producerTitle"><span aria-hidden="true">&#x25B6;</span> Producer Thread</h2>
+    <div class="code-block" role="region" aria-label="Producer thread pseudocode">
+      <div class="code-line" id="ps-loop"><span class="ck">while</span> (true) {</div>
+      <div class="code-line" id="ps-gen">  item = <span class="cf">generate</span>()</div>
+      <div class="code-line" id="ps-ws">  <span class="cf">sem_wait</span>(<span class="cv">spaces</span>) <span class="cc">// &#x2193; or block</span></div>
+      <div class="code-line dimmed" id="ps-lk">  <span class="cf">mutex_lock</span>(<span class="cv">&amp;m</span>)</div>
+      <div class="code-line" id="ps-wr">  buf[tail] = item</div>
+      <div class="code-line" id="ps-tl">  tail = (tail+1) % N</div>
+      <div class="code-line dimmed" id="ps-ul">  <span class="cf">mutex_unlock</span>(<span class="cv">&amp;m</span>)</div>
+      <div class="code-line" id="ps-pi">  <span class="cf">sem_post</span>(<span class="cv">items</span>) <span class="cc">// &#x2191;</span></div>
+      <div class="code-line">}</div>
+    </div>
+    <div class="blocked-section">
+      <div class="blocked-label" id="blockedProdLabel">Blocked producers:</div>
+      <div class="blocked-list" id="blockedProducers" role="status" aria-live="polite" aria-labelledby="blockedProdLabel"><span style="color:#64748b;font-size:0.7em;font-family:monospace;padding:2px 4px;display:block">— none —</span></div>
+    </div>
+  </section>
+
+  <!-- CENTER PANEL -->
+  <section class="panel" aria-labelledby="centerTitle">
+    <h2 class="panel-title sr-only" id="centerTitle">Buffer and Semaphores</h2>
+
+    <!-- SEMAPHORES -->
+    <div class="semaphores-section" role="group" aria-label="Semaphore values">
+      <div class="sem-widget sem-spaces" role="group" aria-labelledby="spacesWidgetName">
+        <div class="sem-name" id="spacesWidgetName">spaces</div>
+        <div class="sem-value" id="spacesVal">8</div>
+        <div class="sem-desc">empty slots available</div>
+        <div class="sem-tokens" id="spacesTokens" aria-hidden="true"></div>
+        <div class="sem-op-hint" aria-hidden="true">sem_wait &#x2193; | sem_post &#x2191;</div>
+        <span class="sr-only" id="spacesLiveStatus" aria-live="polite"></span>
+      </div>
+      <div class="sem-formula" aria-label="spaces plus items equals N" role="note">
+        <div>spaces</div>
+        <div class="sep">+</div>
+        <div>items</div>
+        <div class="sep">=</div>
+        <div style="color:#7dd3fc" id="semSum">8</div>
+        <div class="sep">= N</div>
+      </div>
+      <div class="sem-widget sem-items" role="group" aria-labelledby="itemsWidgetName">
+        <div class="sem-name" id="itemsWidgetName">items</div>
+        <div class="sem-value" id="itemsVal">0</div>
+        <div class="sem-desc">filled slots available</div>
+        <div class="sem-tokens" id="itemsTokens" aria-hidden="true"></div>
+        <div class="sem-op-hint" aria-hidden="true">sem_wait &#x2193; | sem_post &#x2191;</div>
+        <span class="sr-only" id="itemsLiveStatus" aria-live="polite"></span>
+      </div>
+    </div>
+
+    <!-- MUTEX -->
+    <div class="mutex-widget" id="mutexWidget" style="display:none" role="status" aria-live="polite">
+      <div class="mutex-title">Mutex m</div>
+      <div class="mutex-icon" id="mutexIcon">&#x1F513;</div>
+      <div class="mutex-status-text unlocked" id="mutexStatusText">UNLOCKED</div>
+      <div class="mutex-owner" id="mutexOwner">&nbsp;</div>
+      <span class="sr-only" id="mutexLiveStatus"></span>
+    </div>
+
+    <!-- BUFFER -->
+    <div class="buffer-title" id="bufTitleLabel">Ring Buffer &mdash; N = <span id="bufSizeLabel">8</span> slots</div>
+
+    <div class="fill-bar-wrap">
+      <div class="fill-bar-label">Fill:</div>
+      <div class="fill-bar-outer" aria-hidden="true"><div class="fill-bar-inner" id="fillBar" style="width:0%"></div></div>
+      <div class="fill-bar-pct" id="fillPct" aria-hidden="true">0%</div>
+      <div role="progressbar" id="fillProgress" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" aria-label="Buffer fill level: 0%" class="sr-only">0%</div>
+    </div>
+
+    <div class="buffer-cells" id="bufferCells" role="group" aria-label="Buffer cells" aria-describedby="bufTitleLabel"></div>
+    <div class="ptr-row" id="ptrRow" aria-hidden="true"></div>
+
+    <div class="ring-indicator" aria-hidden="true">
+      <span>0</span>
+      <span class="ring-arrow">&#x27F6;</span>
+      <span>1</span>
+      <span class="ring-arrow">&#x27F6;</span>
+      <span>&#x2026;</span>
+      <span class="ring-arrow">&#x27F6;</span>
+      <span>N&#x2212;1</span>
+      <span class="ring-arrow">&#x27F6;</span>
+      <span style="color:#a78bfa">0 (wraps)</span>
+    </div>
+
+    <!-- LEGEND -->
+    <div class="legend" role="note" aria-label="Color legend for buffer cells">
+      <div class="legend-item"><div class="legend-box" aria-hidden="true" style="background:#0f1117;border:1px solid #2d3148"></div>Empty</div>
+      <div class="legend-item"><div class="legend-box" aria-hidden="true" style="background:#1e3a5f;border:1px solid #3b82f6"></div>Filled</div>
+      <div class="legend-item"><div class="legend-box" aria-hidden="true" style="background:#14532d;border:1px solid #22c55e"></div>Writing</div>
+      <div class="legend-item"><div class="legend-box" aria-hidden="true" style="background:#451a03;border:1px solid #f59e0b"></div>Reading</div>
+      <div class="legend-item"><span aria-hidden="true" style="color:#22c55e;font-family:monospace">&#x25B2;T</span>&nbsp;tail ptr</div>
+      <div class="legend-item"><span aria-hidden="true" style="color:#f59e0b;font-family:monospace">&#x25B2;H</span>&nbsp;head ptr</div>
+    </div>
+  </section>
+
+  <!-- CONSUMER PANEL -->
+  <section class="panel" id="consumerPanel" aria-labelledby="consumerTitle">
+    <h2 class="panel-title" id="consumerTitle"><span aria-hidden="true">&#x25B6;</span> Consumer Thread</h2>
+    <div class="code-block" role="region" aria-label="Consumer thread pseudocode">
+      <div class="code-line" id="cs-loop"><span class="ck">while</span> (true) {</div>
+      <div class="code-line" id="cs-wi">  <span class="cf">sem_wait</span>(<span class="cv">items</span>) <span class="cc">// &#x2193; or block</span></div>
+      <div class="code-line dimmed" id="cs-lk">  <span class="cf">mutex_lock</span>(<span class="cv">&amp;m</span>)</div>
+      <div class="code-line" id="cs-rd">  item = buf[head]</div>
+      <div class="code-line" id="cs-hd">  head = (head+1) % N</div>
+      <div class="code-line dimmed" id="cs-ul">  <span class="cf">mutex_unlock</span>(<span class="cv">&amp;m</span>)</div>
+      <div class="code-line" id="cs-ps">  <span class="cf">sem_post</span>(<span class="cv">spaces</span>) <span class="cc">// &#x2191;</span></div>
+      <div class="code-line" id="cs-use">  <span class="cf">use_item</span>(item)</div>
+      <div class="code-line">}</div>
+    </div>
+    <div class="blocked-section">
+      <div class="blocked-label" id="blockedConsLabel">Blocked consumers:</div>
+      <div class="blocked-list" id="blockedConsumers" role="status" aria-live="polite" aria-labelledby="blockedConsLabel"><span style="color:#64748b;font-size:0.7em;font-family:monospace;padding:2px 4px;display:block">— none —</span></div>
+    </div>
+  </section>
+
+</div><!-- end main-layout -->
+
+<!-- CONTROLS -->
+<div class="controls" role="group" aria-label="Simulation controls">
+  <button class="btn-produce" id="btnProduce" onclick="triggerProduce()"><span aria-hidden="true">&#x2B06;</span> Produce</button>
+  <button class="btn-consume" id="btnConsume" onclick="triggerConsume()"><span aria-hidden="true">&#x2B07;</span> Consume</button>
+  <button class="btn-auto"    id="btnAuto"    onclick="toggleAuto()" aria-pressed="false"><span aria-hidden="true">&#x26A1;</span> <span id="btnAutoText">Auto-Demo</span></button>
+  <button class="btn-reset"                   onclick="resetAll()"><span aria-hidden="true">&#x21BA;</span> Reset</button>
+</div>
+
+<!-- LOG -->
+<section class="panel" aria-labelledby="logTitle">
+  <h2 class="panel-title" id="logTitle">Operation Log</h2>
+  <div class="log-panel" id="logPanel" role="log" aria-live="polite" aria-relevant="additions" aria-label="Operation log"></div>
+</section>
+
+</main>
+
+<script>
+// ================================================================
+//  STATE
+// ================================================================
+let N = 8;
+let buf = [];
+let head = 0, tail = 0;
+let semSpaces = N, semItems = 0;
+let mutexLocked = false, mutexOwnerName = '';
+let useMutex = false;
+let animMs = 750;
+let busy = false;
+let autoRunning = false;
+let autoTimer = null;
+let itemCounter = 0, opCounter = 0;
+let totalOps = 0;
+let logStart = Date.now();
+
+// Blocked-thread queues (just counters for display)
+let bProducers = [];
+let bConsumers = [];
+
+// Auto-fill-drain state
+let fillDrainPhase = 'fill'; // 'fill' | 'drain'
+
+// ================================================================
+//  ACCESSIBILITY ANNOUNCE
+// ================================================================
+function announce(msg) {
+  const el = document.getElementById('ariaAnnounce');
+  el.textContent = '';
+  requestAnimationFrame(() => { el.textContent = msg; });
+}
+
+// ================================================================
+//  INIT
+// ================================================================
+function init() {
+  N = parseInt(document.getElementById('bufSizeSelect').value);
+  buf = new Array(N).fill(null);
+  head = 0; tail = 0;
+  semSpaces = N; semItems = 0;
+  mutexLocked = false; mutexOwnerName = '';
+  bProducers = []; bConsumers = [];
+  fillDrainPhase = 'fill';
+  document.getElementById('bufSizeLabel').textContent = N;
+  buildBuffer();
+  refreshAll();
+  clearHighlights();
+}
+
+function buildBuffer() {
+  const cells = document.getElementById('bufferCells');
+  const ptrs  = document.getElementById('ptrRow');
+  cells.innerHTML = '';
+  ptrs.innerHTML  = '';
+  for (let i = 0; i < N; i++) {
+    const c = document.createElement('div');
+    c.className = 'buf-cell';
+    c.id = `c${i}`;
+    c.setAttribute('role', 'img');
+    c.setAttribute('aria-label', `Slot ${i}: empty`);
+    const idx = document.createElement('div');
+    idx.className = 'cell-idx';
+    idx.textContent = i;
+    idx.setAttribute('aria-hidden', 'true');
+    c.appendChild(idx);
+    const val = document.createElement('span');
+    val.id = `v${i}`;
+    val.setAttribute('aria-hidden', 'true');
+    c.appendChild(val);
+    cells.appendChild(c);
+
+    const p = document.createElement('div');
+    p.className = 'ptr-cell';
+    p.id = `p${i}`;
+    ptrs.appendChild(p);
+  }
+}
+
+// ================================================================
+//  REFRESH UI
+// ================================================================
+function refreshAll() {
+  refreshBuffer();
+  refreshSemaphores();
+  refreshMutex();
+  refreshBlocked();
+  refreshStatus();
+}
+
+function refreshBuffer() {
+  const filled = buf.filter(x => x !== null).length;
+  for (let i = 0; i < N; i++) {
+    const cell = document.getElementById(`c${i}`);
+    const val  = document.getElementById(`v${i}`);
+    const isH = i === head, isT = i === tail;
+    if (!cell.classList.contains('writing') && !cell.classList.contains('reading')) {
+      cell.className = 'buf-cell' + (buf[i] !== null ? ' filled' : '');
+    }
+    if (!cell.classList.contains('writing') && !cell.classList.contains('reading')) {
+      val.textContent = buf[i] !== null ? buf[i] : '';
+      // Update ARIA label for cell state
+      let ptrStr = '';
+      if (isH && isT) ptrStr = ', head and tail pointer here';
+      else if (isH) ptrStr = ', head pointer here';
+      else if (isT) ptrStr = ', tail pointer here';
+      const stateStr = buf[i] !== null ? `filled with value ${buf[i]}` : 'empty';
+      cell.setAttribute('aria-label', `Slot ${i}: ${stateStr}${ptrStr}`);
+    }
+    const ptr = document.getElementById(`p${i}`);
+    if (isH && isT) { ptr.className = 'ptr-cell ptr-HT'; ptr.textContent = '▲ H/T'; }
+    else if (isH)   { ptr.className = 'ptr-cell ptr-H';  ptr.textContent = '▲ H'; }
+    else if (isT)   { ptr.className = 'ptr-cell ptr-T';  ptr.textContent = '▲ T'; }
+    else            { ptr.className = 'ptr-cell'; ptr.textContent = ''; }
+  }
+  // Fill bar
+  const pct = Math.round((filled / N) * 100);
+  document.getElementById('fillBar').style.width = pct + '%';
+  document.getElementById('fillPct').textContent = pct + '%';
+  const fillProgress = document.getElementById('fillProgress');
+  fillProgress.setAttribute('aria-valuenow', pct);
+  fillProgress.setAttribute('aria-label', `Buffer fill level: ${pct}%`);
+  fillProgress.textContent = `${pct}%`;
+}
+
+function refreshSemaphores() {
+  const sv = document.getElementById('spacesVal');
+  const iv = document.getElementById('itemsVal');
+  sv.textContent = semSpaces;
+  iv.textContent = semItems;
+  sv.className = 'sem-value' + (semSpaces === 0 ? ' zero' : '');
+  iv.className = 'sem-value' + (semItems  === 0 ? ' zero' : '');
+  document.getElementById('semSum').textContent = semSpaces + semItems;
+
+  // Update live status spans for screen readers
+  document.getElementById('spacesLiveStatus').textContent = `spaces: ${semSpaces}`;
+  document.getElementById('itemsLiveStatus').textContent = `items: ${semItems}`;
+
+  // Tokens (max 16 shown)
+  function renderTokens(id, count) {
+    const el = document.getElementById(id);
+    el.innerHTML = '';
+    const show = Math.min(count, 16);
+    for (let i = 0; i < show; i++) {
+      const t = document.createElement('div');
+      t.className = 'sem-token';
+      el.appendChild(t);
+    }
+    if (count > 16) {
+      const more = document.createElement('span');
+      more.style.cssText = 'font-size:0.6em;color:#94a3b8;align-self:center';
+      more.textContent = `+${count - 16}`;
+      el.appendChild(more);
+    }
+  }
+  renderTokens('spacesTokens', semSpaces);
+  renderTokens('itemsTokens', semItems);
+}
+
+function bumpAnim(id) {
+  const el = document.getElementById(id);
+  el.classList.add('bump');
+  setTimeout(() => el.classList.remove('bump'), 250);
+}
+
+function refreshMutex() {
+  const w    = document.getElementById('mutexWidget');
+  const icon = document.getElementById('mutexIcon');
+  const txt  = document.getElementById('mutexStatusText');
+  const own  = document.getElementById('mutexOwner');
+  const liveStatus = document.getElementById('mutexLiveStatus');
+  w.style.display = useMutex ? 'block' : 'none';
+  if (!useMutex) return;
+  if (mutexLocked) {
+    w.classList.add('locked-state');
+    icon.textContent = '🔒';
+    txt.className = 'mutex-status-text locked';
+    txt.textContent = 'LOCKED';
+    own.textContent = `held by: ${mutexOwnerName}`;
+    liveStatus.textContent = `Mutex LOCKED, held by ${mutexOwnerName}`;
+  } else {
+    w.classList.remove('locked-state');
+    icon.textContent = '🔓';
+    txt.className = 'mutex-status-text unlocked';
+    txt.textContent = 'UNLOCKED';
+    own.textContent = '\u00A0';
+    liveStatus.textContent = 'Mutex UNLOCKED';
+  }
+}
+
+function refreshBlocked() {
+  function render(elId, arr, role, semName) {
+    const el = document.getElementById(elId);
+    if (arr.length === 0) {
+      el.innerHTML = '<span style="color:#64748b;font-size:0.7em;font-family:monospace;padding:2px 4px;display:block">— none —</span>';
+    } else {
+      el.innerHTML = arr.map(id =>
+        `<div class="blocked-thread">${role}${id}: waiting (${semName} = 0)</div>`
+      ).join('');
+    }
+  }
+  render('blockedProducers', bProducers, 'P', 'spaces');
+  render('blockedConsumers', bConsumers, 'C', 'items');
+}
+
+function refreshStatus() {
+  const filled = buf.filter(x => x !== null).length;
+  document.getElementById('statFill').textContent   = filled;
+  document.getElementById('statSize').textContent   = N;
+  const sp = document.getElementById('statSpaces');
+  sp.textContent = semSpaces;
+  sp.className   = semSpaces === 0 ? 'warn' : 'ok';
+  const it = document.getElementById('statItems');
+  it.textContent = semItems;
+  it.className   = semItems === 0 ? 'warn' : '';
+  document.getElementById('statHead').textContent   = head;
+  document.getElementById('statTail').textContent   = tail;
+  document.getElementById('statOps').textContent    = totalOps;
+}
+
+// ================================================================
+//  HIGHLIGHT
+// ================================================================
+function clearHighlights() {
+  document.querySelectorAll('.code-line').forEach(el => {
+    el.classList.remove('active', 'blocked');
+  });
+}
+
+function hl(id, type = 'active') {
+  clearHighlights();
+  const el = document.getElementById(id);
+  if (el) {
+    el.classList.add(type);
+    const lineText = el.textContent.replace(/\s+/g, ' ').trim();
+    announce(type === 'blocked' ? `Blocked at: ${lineText}` : `Executing: ${lineText}`);
+  }
+}
+
+// ================================================================
+//  DELAY
+// ================================================================
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// ================================================================
+//  LOG
+// ================================================================
+function log(msg, type = 'li') {
+  const panel = document.getElementById('logPanel');
+  const t = ((Date.now() - logStart) / 1000).toFixed(1);
+  const e = document.createElement('div');
+  e.className = `log-entry ${type}`;
+  e.innerHTML = `<span class="log-t">[${t}s]</span>${msg}`;
+  panel.appendChild(e);
+  panel.scrollTop = panel.scrollHeight;
+}
+
+// ================================================================
+//  PRODUCE
+// ================================================================
+async function produce(pid) {
+  const label = `P${pid}`;
+  totalOps++;
+
+  // Step: sem_wait(spaces)
+  hl('ps-ws');
+  if (semSpaces === 0) {
+    hl('ps-ws', 'blocked');
+    bProducers.push(pid);
+    refreshBlocked();
+    log(`${label}: sem_wait(spaces) → BLOCKED  ⛔ buffer full (spaces=0)`, 'lb');
+    return false; // blocked, did not complete
+  }
+  log(`${label}: sem_wait(spaces)  spaces: ${semSpaces} → ${semSpaces - 1}`, 'lp');
+  semSpaces--;
+  refreshSemaphores(); bumpAnim('spacesVal');
+  await sleep(animMs);
+
+  // Step: mutex_lock
+  if (useMutex) {
+    hl('ps-lk');
+    log(`${label}: mutex_lock(&m)  🔒`, 'lp');
+    mutexLocked = true; mutexOwnerName = label;
+    refreshMutex();
+    await sleep(animMs);
+  }
+
+  // Step: write
+  hl('ps-wr');
+  const item = ++itemCounter;
+  const writeSlot = tail;
+  log(`${label}: buf[${writeSlot}] = ${item}  (tail=${writeSlot})`, 'lp');
+  const cell = document.getElementById(`c${writeSlot}`);
+  const valEl = document.getElementById(`v${writeSlot}`);
+  cell.className = 'buf-cell writing';
+  cell.setAttribute('aria-label', `Slot ${writeSlot}: writing value ${item}, tail pointer here`);
+  valEl.textContent = item;
+  await sleep(animMs);
+
+  buf[writeSlot] = item;
+
+  // Step: advance tail
+  hl('ps-tl');
+  const oldTail = tail;
+  tail = (tail + 1) % N;
+  log(`${label}: tail = (${oldTail}+1) % ${N} = ${tail}`, 'lp');
+  cell.className = 'buf-cell filled';
+  refreshBuffer();
+  await sleep(animMs);
+
+  // Step: mutex_unlock
+  if (useMutex) {
+    hl('ps-ul');
+    log(`${label}: mutex_unlock(&m)  🔓`, 'lp');
+    mutexLocked = false; mutexOwnerName = '';
+    refreshMutex();
+    await sleep(animMs);
+  }
+
+  // Step: sem_post(items)
+  hl('ps-pi');
+  semItems++;
+  log(`${label}: sem_post(items)   items: ${semItems - 1} → ${semItems}`, 'lp');
+  refreshSemaphores(); bumpAnim('itemsVal');
+  refreshStatus();
+
+  // Wake a blocked consumer if any
+  if (bConsumers.length > 0) {
+    const woken = bConsumers.shift();
+    refreshBlocked();
+    log(`  ↳ Consumer C${woken} UNBLOCKED  ✅ (items now ${semItems})`, 'lu');
+  }
+
+  await sleep(animMs);
+  clearHighlights();
+  refreshStatus();
+  return true;
+}
+
+// ================================================================
+//  CONSUME
+// ================================================================
+async function consume(cid) {
+  const label = `C${cid}`;
+  totalOps++;
+
+  // Step: sem_wait(items)
+  hl('cs-wi');
+  if (semItems === 0) {
+    hl('cs-wi', 'blocked');
+    bConsumers.push(cid);
+    refreshBlocked();
+    log(`${label}: sem_wait(items) → BLOCKED  ⛔ buffer empty (items=0)`, 'lb');
+    return false;
+  }
+  log(`${label}: sem_wait(items)   items: ${semItems} → ${semItems - 1}`, 'lc');
+  semItems--;
+  refreshSemaphores(); bumpAnim('itemsVal');
+  await sleep(animMs);
+
+  // Step: mutex_lock
+  if (useMutex) {
+    hl('cs-lk');
+    log(`${label}: mutex_lock(&m)  🔒`, 'lc');
+    mutexLocked = true; mutexOwnerName = label;
+    refreshMutex();
+    await sleep(animMs);
+  }
+
+  // Step: read
+  hl('cs-rd');
+  const readSlot = head;
+  const item = buf[readSlot];
+  log(`${label}: item = buf[${readSlot}] = ${item}  (head=${readSlot})`, 'lc');
+  const cell = document.getElementById(`c${readSlot}`);
+  const valEl = document.getElementById(`v${readSlot}`);
+  cell.className = 'buf-cell reading';
+  cell.setAttribute('aria-label', `Slot ${readSlot}: reading value ${item}, head pointer here`);
+  await sleep(animMs);
+
+  buf[readSlot] = null;
+  valEl.textContent = '';
+
+  // Step: advance head
+  hl('cs-hd');
+  const oldHead = head;
+  head = (head + 1) % N;
+  log(`${label}: head = (${oldHead}+1) % ${N} = ${head}`, 'lc');
+  cell.className = 'buf-cell';
+  refreshBuffer();
+  await sleep(animMs);
+
+  // Step: mutex_unlock
+  if (useMutex) {
+    hl('cs-ul');
+    log(`${label}: mutex_unlock(&m)  🔓`, 'lc');
+    mutexLocked = false; mutexOwnerName = '';
+    refreshMutex();
+    await sleep(animMs);
+  }
+
+  // Step: sem_post(spaces)
+  hl('cs-ps');
+  semSpaces++;
+  log(`${label}: sem_post(spaces)  spaces: ${semSpaces - 1} → ${semSpaces}`, 'lc');
+  refreshSemaphores(); bumpAnim('spacesVal');
+  refreshStatus();
+
+  // Wake a blocked producer if any
+  if (bProducers.length > 0) {
+    const woken = bProducers.shift();
+    refreshBlocked();
+    log(`  ↳ Producer P${woken} UNBLOCKED  ✅ (spaces now ${semSpaces})`, 'lu');
+  }
+
+  // Step: use item
+  hl('cs-use');
+  log(`${label}: use_item(${item})  ✓`, 'lc');
+  await sleep(animMs);
+
+  clearHighlights();
+  refreshStatus();
+  return true;
+}
+
+// ================================================================
+//  BUTTON HANDLERS
+// ================================================================
+let pCounter = 0, cCounter = 0;
+
+async function triggerProduce() {
+  if (busy) return;
+  busy = true;
+  setButtonsEnabled(false);
+  await produce(++pCounter);
+  busy = false;
+  setButtonsEnabled(true);
+}
+
+async function triggerConsume() {
+  if (busy) return;
+  busy = true;
+  setButtonsEnabled(false);
+  await consume(++cCounter);
+  busy = false;
+  setButtonsEnabled(true);
+}
+
+function setButtonsEnabled(en) {
+  document.getElementById('btnProduce').disabled = !en;
+  document.getElementById('btnConsume').disabled = !en;
+}
+
+// ================================================================
+//  AUTO DEMO
+// ================================================================
+async function autoStep() {
+  if (!autoRunning || busy) return;
+  const mode = document.getElementById('autoMode').value;
+  if (mode === 'none') return;
+
+  busy = true;
+  setButtonsEnabled(false);
+
+  let action;
+  if (mode === 'produce') {
+    action = 'produce';
+  } else if (mode === 'consume') {
+    action = 'consume';
+  } else if (mode === 'fill') {
+    // Fill until full, then drain until empty, repeat
+    const filled = buf.filter(x => x !== null).length;
+    if (fillDrainPhase === 'fill') {
+      if (filled < N) action = 'produce';
+      else { fillDrainPhase = 'drain'; action = 'consume'; }
+    } else {
+      if (filled > 0) action = 'consume';
+      else { fillDrainPhase = 'fill'; action = 'produce'; }
+    }
+  } else {
+    // 'both' — random but weighted toward balance
+    const filled = buf.filter(x => x !== null).length;
+    const produceBias = 0.5 + (N / 2 - filled) * 0.08;
+    action = Math.random() < produceBias ? 'produce' : 'consume';
+  }
+
+  if (action === 'produce') await produce(++pCounter);
+  else                      await consume(++cCounter);
+
+  busy = false;
+  setButtonsEnabled(true);
+}
+
+function toggleAuto() {
+  autoRunning = !autoRunning;
+  const btn = document.getElementById('btnAuto');
+  btn.setAttribute('aria-pressed', autoRunning ? 'true' : 'false');
+  if (autoRunning) {
+    document.getElementById('btnAutoText').textContent = 'Stop Auto';
+    btn.classList.add('running');
+    autoTimer = setInterval(() => autoStep(), animMs * 5 + 200);
+    autoStep();
+  } else {
+    document.getElementById('btnAutoText').textContent = 'Auto-Demo';
+    btn.classList.remove('running');
+    clearInterval(autoTimer);
+    autoTimer = null;
+  }
+}
+
+// ================================================================
+//  RESET
+// ================================================================
+function resetAll() {
+  if (autoRunning) toggleAuto();
+  busy = false;
+  pCounter = 0; cCounter = 0;
+  itemCounter = 0; opCounter = 0; totalOps = 0;
+  logStart = Date.now();
+  document.getElementById('logPanel').innerHTML = '';
+  const announceEl = document.getElementById('ariaAnnounce');
+  if (announceEl) announceEl.textContent = '';
+  init();
+  setButtonsEnabled(true);
+  log(`Reset — N=${N}, spaces=${N}, items=0`, 'li');
+}
+
+// ================================================================
+//  SETTINGS LISTENERS
+// ================================================================
+document.getElementById('bufSizeSelect').addEventListener('change', resetAll);
+
+document.getElementById('speedSlider').addEventListener('input', e => {
+  animMs = parseInt(e.target.value);
+  document.getElementById('speedLabel').textContent = animMs + 'ms';
+  if (autoRunning) {
+    clearInterval(autoTimer);
+    autoTimer = setInterval(() => autoStep(), animMs * 5 + 200);
+  }
+});
+
+document.getElementById('mutexToggle').addEventListener('change', e => {
+  useMutex = e.target.checked;
+  refreshMutex();
+  // Dim/un-dim mutex lines
+  ['ps-lk', 'ps-ul', 'cs-lk', 'cs-ul'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.classList.toggle('dimmed', !useMutex);
+    }
+  });
+  log(`Mutex ${useMutex ? 'ENABLED — mutex_lock/unlock active' : 'DISABLED — mutex lines dimmed'}`, 'li');
+});
+
+document.getElementById('autoMode').addEventListener('change', () => {
+  fillDrainPhase = 'fill';
+});
+
+// ================================================================
+//  BOOTSTRAP
+// ================================================================
+init();
+log(`Demo ready — N=${N} ring buffer, spaces=${N}, items=0`, 'li');
+log(`Click "Produce" to write, "Consume" to read, or try Auto-Demo`, 'li');
+</script>
+</body>
+</html>

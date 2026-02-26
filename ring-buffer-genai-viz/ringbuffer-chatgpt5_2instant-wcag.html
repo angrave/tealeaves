@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Ring Buffer with Counting Semaphores (Accessible)</title>
+
+<style>
+  body {
+    font-family: system-ui, sans-serif;
+    background: #f5f7fb;
+    margin: 0;
+    padding: 20px;
+    color: #000;
+  }
+
+  header, main, section {
+    max-width: 960px;
+    margin: auto;
+  }
+
+  h1 {
+    text-align: center;
+  }
+
+  fieldset {
+    border: none;
+    margin-bottom: 20px;
+  }
+
+  .controls {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  label {
+    font-size: 14px;
+  }
+
+  button {
+    padding: 10px 16px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+
+  button:focus-visible,
+  input:focus-visible {
+    outline: 3px solid #005fcc;
+    outline-offset: 2px;
+  }
+
+  .status {
+    display: flex;
+    gap: 40px;
+    justify-content: center;
+    font-size: 16px;
+    margin-bottom: 20px;
+  }
+
+  .semaphore {
+    background: #fff;
+    padding: 12px;
+    border-radius: 6px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+  }
+
+  .buffer {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    margin-bottom: 15px;
+  }
+
+  .slot {
+    width: 60px;
+    height: 60px;
+    border-radius: 8px;
+    border: 2px solid #444;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #fff;
+    font-size: 20px;
+  }
+
+  .filled {
+    background: #a7d7ff;
+  }
+
+  .mutex {
+    text-align: center;
+    font-size: 16px;
+  }
+
+  .locked {
+    color: #b00020;
+    font-weight: bold;
+  }
+
+  .unlocked {
+    color: #006400;
+    font-weight: bold;
+  }
+
+  .note {
+    background: #fff;
+    padding: 15px;
+    border-radius: 8px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+    margin-top: 20px;
+  }
+</style>
+</head>
+
+<body>
+
+<header>
+  <h1>Ring Buffer with Counting Semaphores</h1>
+</header>
+
+<main>
+
+<section aria-labelledby="controls-heading">
+  <h2 id="controls-heading">Simulation Controls</h2>
+
+  <fieldset class="controls">
+    <button id="produceBtn" type="button">Produce</button>
+    <button id="consumeBtn" type="button">Consume</button>
+
+    <label for="producers">
+      Producers:
+      <input id="producers" type="number" value="1" min="1" max="5" />
+    </label>
+
+    <label for="consumers">
+      Consumers:
+      <input id="consumers" type="number" value="1" min="1" max="5" />
+    </label>
+
+    <label>
+      <input type="checkbox" id="mutexToggle" checked />
+      Use Mutex
+    </label>
+  </fieldset>
+</section>
+
+<section aria-labelledby="status-heading">
+  <h2 id="status-heading">Semaphore Status</h2>
+
+  <div class="status">
+    <div class="semaphore" aria-live="polite">
+      Items semaphore:
+      <span id="itemsCount">0</span>
+    </div>
+
+    <div class="semaphore" aria-live="polite">
+      Spaces semaphore:
+      <span id="spacesCount">5</span>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="buffer-heading">
+  <h2 id="buffer-heading">Ring Buffer</h2>
+
+  <ul class="buffer" id="buffer" role="list" aria-label="Ring buffer slots">
+  </ul>
+</section>
+
+<section class="mutex" aria-live="polite">
+  Mutex state:
+  <span id="mutexState" class="unlocked">Unlocked</span>
+</section>
+
+<section class="note">
+  <h2>Teaching Notes</h2>
+  <ul>
+    <li><code>items</code> prevents buffer underflow</li>
+    <li><code>spaces</code> prevents buffer overflow</li>
+    <li>The mutex protects head, tail, and buffer state</li>
+    <li>Disable the mutex to demonstrate race conditions</li>
+  </ul>
+</section>
+
+</main>
+
+<script>
+const BUFFER_SIZE = 5;
+const buffer = new Array(BUFFER_SIZE).fill(null);
+
+let head = 0;
+let tail = 0;
+let items = 0;
+let spaces = BUFFER_SIZE;
+let mutexLocked = false;
+
+const STEP_DELAY = 400;
+
+const bufferList = document.getElementById("buffer");
+const itemsSpan = document.getElementById("itemsCount");
+const spacesSpan = document.getElementById("spacesCount");
+const mutexSpan = document.getElementById("mutexState");
+
+function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+function render() {
+  bufferList.innerHTML = "";
+
+  buffer.forEach((val, i) => {
+    const li = document.createElement("li");
+    li.className = "slot" + (val ? " filled" : "");
+    li.setAttribute(
+      "aria-label",
+      val
+        ? `Slot ${i + 1}: occupied`
+        : `Slot ${i + 1}: empty`
+    );
+    li.textContent = val ? "●" : "";
+    bufferList.appendChild(li);
+  });
+
+  itemsSpan.textContent = items;
+  spacesSpan.textContent = spaces;
+
+  mutexSpan.textContent = mutexLocked ? "Locked" : "Unlocked";
+  mutexSpan.className = mutexLocked ? "locked" : "unlocked";
+}
+
+async function lockMutex() {
+  while (mutexLocked) await sleep(50);
+  mutexLocked = true;
+  render();
+}
+
+function unlockMutex() {
+  mutexLocked = false;
+  render();
+}
+
+async function produce() {
+  const count = Number(document.getElementById("producers").value);
+
+  for (let i = 0; i < count; i++) {
+    await sleep(STEP_DELAY);
+    if (spaces === 0) return;
+
+    spaces--;
+    render();
+
+    if (document.getElementById("mutexToggle").checked) {
+      await lockMutex();
+    }
+
+    buffer[tail] = "●";
+    tail = (tail + 1) % BUFFER_SIZE;
+    render();
+
+    if (document.getElementById("mutexToggle").checked) {
+      unlockMutex();
+    }
+
+    items++;
+    render();
+  }
+}
+
+async function consume() {
+  const count = Number(document.getElementById("consumers").value);
+
+  for (let i = 0; i < count; i++) {
+    await sleep(STEP_DELAY);
+    if (items === 0) return;
+
+    items--;
+    render();
+
+    if (document.getElementById("mutexToggle").checked) {
+      await lockMutex();
+    }
+
+    buffer[head] = null;
+    head = (head + 1) % BUFFER_SIZE;
+    render();
+
+    if (document.getElementById("mutexToggle").checked) {
+      unlockMutex();
+    }
+
+    spaces++;
+    render();
+  }
+}
+
+document.getElementById("produceBtn").addEventListener("click", produce);
+document.getElementById("consumeBtn").addEventListener("click", consume);
+
+render();
+</script>
+
+</body>
+</html>

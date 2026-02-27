@@ -9,10 +9,10 @@ The initial prompt was deliberately simple. I made no attempt to craft a careful
 
 After creating the initial demo, except for Sonnet because it was good enough, most models were given one round of feedback to improve the initial attempt. The feedback was a couple of sentences - to represent a typical 15 minutes of my time available to create a quick lecture demo rather a publication-quality level demonstration. None of them were perfect (especially in terms of showcasing multiple producers or consumers and the utility of  the lock). Overall the Opus demo was the best, though the mutex lock would have been better labeled as unlocked and locked rather than "1" or "0" and the brightness contrast was insufficient in the original version. Qwen3-Coder-Next version deadlocked initially but worked sufficiently after pointing this out. Qwen also asked a few useful design questions before creating code. My least favorite and the least useful was the ChatGPT version.
 
-* Opus 4.6 (Medium effort):  [live demo](https://angrave.github.io/tealeaves/ring-buffer-genai-viz/ringbuffer-opus4_6.html) 
-* Sonnet 4.6: [live demo](https://angrave.github.io/tealeaves/ring-buffer-genai-viz/ringbuffer-Sonnet4-6.html)
-* ChatGPT 5.2 Instant: [live demo](https://angrave.github.io/tealeaves/ring-buffer-genai-viz/ringbuffer-chatgpt5_2instant.html) (copy-pasting into ChatGPT website)
-* Qwen3-Coder-Next: [live demo](https://angrave.github.io/tealeaves/ring-buffer-genai-viz/ringbuffer-Qwen3-Coder-next.html) (fp8 running on a 128GB Spark)
+* ClaudeCode CLI Opus 4.6 (Medium effort):  [live demo](https://angrave.github.io/tealeaves/ring-buffer-genai-viz/ringbuffer-opus4_6.html) 
+* ClaudeCode CLI Sonnet 4.6: [live demo](https://angrave.github.io/tealeaves/ring-buffer-genai-viz/ringbuffer-Sonnet4-6.html)
+* Qwen3-Coder-Next: [live demo](https://angrave.github.io/tealeaves/ring-buffer-genai-viz/ringbuffer-Qwen3-Coder-next.html) (fp8 running on a 128GB Spark using OpenCode CLI)
+* ChatGPT 5.2 Instant: [live demo](https://angrave.github.io/tealeaves/ring-buffer-genai-viz/ringbuffer-chatgpt5_2instant.html) (copy-pasted to/from ChatGPT website)
 
 None of the html content was WCAG compliant, so later, in a new session I asked each model to fix their code. This was more challenging than the original prompt. I have not performed a WCAG review of the output.
 

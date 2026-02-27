@@ -30,7 +30,7 @@ This commentary and source code for all of these demos is published on [GitHub](
 The number of accessibility changes were significant. I'm not qualified to perform a full review of all of these changes but it is interesting to at least see the summary of these models.
 
 Sonnet changes (17 minutes of processing!) -
-<tt>
+````txt
 WCAG 2.1 AA Changes Applied
 
   Color Contrast Fixes
@@ -62,10 +62,10 @@ WCAG 2.1 AA Changes Applied
   - #ariaAnnounce hidden live region that announces each pseudocode step as it executes ("Executing: sem_wait(spaces)" / "Blocked at:
   sem_wait(spaces)")
   - Cell aria-label dynamically updated with state + pointer info (e.g. "Slot 3: filled with value 5, head pointer here")
-</tt>
+````
 
 Opus required 2 minutes. Summary of changes-
-<tt>
+````txt
  Structure & Semantics
   - Added role="main", <section> elements with aria-label, and heading hierarchy (<h2 class="sr-only">) for screen reader navigation
   - Skip-to-content link (Skip to controls) for keyboard users
@@ -94,9 +94,9 @@ Opus required 2 minutes. Summary of changes-
   - Proper <label> elements for speed slider, buffer size select, and mutex checkbox
   - aria-describedby on mutex checkbox for extra context
   - aria-valuetext on speed slider updated dynamically
-</tt>
+````
 Qwen3-Coder-Next (5 minutes processing) summary -
-<tt>
+````txt
 - ARIA labels on all interactive elements (buttons, inputs, semaphores, buffer slots)
 - aria-live regions for dynamic content updates
 - Keyboard navigation (Tab focus, arrow keys for range slider)
@@ -104,6 +104,6 @@ Qwen3-Coder-Next (5 minutes processing) summary -
 - Screen reader announcements for simulation events
 - Semantic HTML with proper roles and labels
 - High contrast for status indicators
-</tt>
+````
 
 I didn't keep a copy of ChatGPT's summary.

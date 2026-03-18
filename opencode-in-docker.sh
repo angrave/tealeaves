@@ -8,19 +8,19 @@
 
 # Create a new directory e.g., "hello-ai", change to that directory and then run this script
 # It will mount that directory and download the official opencode docker image
-# Type /connect then search for litellm.kooper.org to connect to it (it will ask you for the api key)
+# Type /connect then search for llm.ncsa.illinois.edu to connect to it (it will ask you for the api key)
 # Type "Hello" or "Create a file hello.py that prints hello world"
 # Type /exit to exit
 
 export OPENCODE_CONFIG_CONTENT=$(cat <<EOF
 {
   "provider": {
-    "litellm.kooper.org": {      
+    "llm.ncsa.illinois.edu": {      
       "models": {
               "qwen3-coder-next": {"name": "qwen3-coder-next" }
               },
       "options": {
-        "baseURL": "https://litellm.kooper.org/"
+        "baseURL": "https://llm.ncsa.illinois.edu/"
       }
     }
   }

@@ -33,12 +33,21 @@ docker pull ghcr.io/anomalyco/opencode:latest
 
 # The -v mount syntax creates our own ~/.local/share/opencode-dockerized if it does not exist
 # You could mount ~/.local/share/opencode instead
+# 
+if find ~/.local/share  -user root -print -quit | grep -q .
+then
+echo -e "Earlier versions of created configuration files and directories as root. Please fix then run me again e.g, \nsudo chown -R $USER:$USER ~/.local/share ."
+else
+
+mkdir -p ~/.local/share/opencode-dockerized
 docker run -it --rm \
+  -u $(id -u):$(id -g) \
   -e OPENCODE_CONFIG_CONTENT \
+  -e HOME=/tmp/opencode \
   --workdir /workspace \
   -v "$(pwd):/workspace" \
-  -v ~/.local/share/opencode-dockerized/:/root/.local/share/opencode/ \
+  -v ~/.local/share/opencode-dockerized/:/tmp/opencode/ \
   ghcr.io/anomalyco/opencode:latest "$@"
-
+fi
 
 

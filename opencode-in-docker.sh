@@ -26,16 +26,7 @@ export OPENCODE_CONFIG_CONTENT=$(cat <<EOF
     },
     "lumen.ncsa.illinois.edu": {
       "models": {
-              "qwen3-coder-next": {"name": "qwen3-coder-next" },
-     "nemotron-cascade-2": {
-       "name": "nemotron-cascade-2",
-       "limit": {"context": 32768, "output": 16000},
-       "options": {
-          "reasoning_budget": 4096,
-          "temperature": 1.0,
-          "top_p": 0.95,
-          "systemPrompt": "You are an expert developer. For complex tasks, use <think> tags for reasoning. When you need to use a tool, wrap the call in <tool_call> tags. Available tools are listed below in <tools> tags. If necessary adjust tool calling and retry"
-      }
+              "qwen3-coder-next": {"name": "qwen3-coder-next" }
     }
               },
       "options": {

@@ -21,16 +21,15 @@ export OPENCODE_CONFIG_CONTENT=$(cat <<EOF
               "qwen3-coder-next": {"name": "qwen3-coder-next" }
               },
       "options": {
-        "baseURL": "https://llm.ncsa.illinois.edu/v1"
+              "baseURL": "https://llm.ncsa.illinois.edu/v1"
       }
     },
     "lumen.ncsa.illinois.edu": {
       "models": {
               "qwen3-coder-next": {"name": "qwen3-coder-next" }
-    }
               },
       "options": {
-        "baseURL": "https://lumen.ncsa.illinois.edu/v1"
+              "baseURL": "https://lumen.ncsa.illinois.edu/v1"
       }
     }
   }

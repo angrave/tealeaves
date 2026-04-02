@@ -45,7 +45,7 @@ NORM='\033[0m'
 
 if ! docker info >/dev/null ; then
    printf "${RED}You need docker to be installed and running${NORM}"
-   return
+   exit
 fi
 
 
@@ -73,7 +73,7 @@ docker pull "$OPENCODE_IMAGE"
 
 # The -v mount syntax creates our own ~/.local/share/opencode-dockerized if it does not exist
 # You could mount ~/.local/share/opencode instead
-docker run -it --rm \
+exec docker run -it --rm \
   -u $(id -u):$(id -g) \
   -e OPENCODE_CONFIG_CONTENT \
   -e HOME=/tmp/opencode \

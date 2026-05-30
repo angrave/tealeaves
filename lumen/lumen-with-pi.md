@@ -15,13 +15,13 @@ Full install instructions at [pi.dev](pi.dev)
 
 * If you don't have a key yet, login and  create a Lumen API key. You can create keys either directly under your own [profile](https://lumen.ncsa.illinois.edu/profile) or as a [client](https://lumen.ncsa.illinois.edu/clients) project.
 
-* Store this in an environment variable e.g., <pre>export LUMEN_NCSA_KEY=<em>yourkey</em></pre>
+* Store this key in an environment variable e.g., <pre>export LUMEN_NCSA_KEY=<em>yourkey</em></pre>
 
-* Add the above export line to your .bashrc or equivalent)
+* Add the above export line to your .bashrc or equivalent
 
 ## Select a current Lumen model
 
-Select an agentic model,
+View and select an agentic model,
 https://lumen.ncsa.illinois.edu/models
 The model page can also tell you the max context size
 

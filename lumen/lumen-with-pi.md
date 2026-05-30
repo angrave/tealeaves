@@ -13,7 +13,7 @@ Full install instructions at [pi.dev](pi.dev)
 
 ## Get a current model name and API Key from Lumen
 
-* If you don't have a key yet, login and  create a Lumen API key [](https://lumen.ncsa.illinois.edu/profile)
+* If you don't have a key yet, login and  create a Lumen API key. You can create keys either directly under your own [profile](https://lumen.ncsa.illinois.edu/profile) or as a [client](https://lumen.ncsa.illinois.edu/clients) project.
 
 * Store this in an environment variable e.g., <pre>export LUMEN_NCSA_KEY=<em>yourkey</em></pre>
 

@@ -2,120 +2,243 @@
 # kdumpsetup.sh - enable/disable the kdump crash-kernel memory reservation
 #
 # Usage: kdumpsetup.sh [enable|disable]   (no argument: show state and usage)
+#        kdumpsetup.sh check enable|disable  exit 0 if already in that state
 #
-# Background: kdump-tools adds crashkernel=... to the kernel command line
-# (/etc/default/grub.d/kdump-tools.cfg). On a 4 GB VM that permanently
-# reserves 512 MB for a crash-capture kernel - RAM the system can never use
-# otherwise - even when kdump itself is off (USE_KDUMP=0).
+# Background: kdump adds crashkernel=... to the kernel command line. On a
+# 4 GB VM that permanently reserves RAM for a crash-capture kernel - RAM the
+# system can never use otherwise - even when kdump itself is off.
+#   Debian/Ubuntu: kdump-tools, via /etc/default/grub.d/kdump-tools.cfg
+#                  (512 MB on a 4 GB Ubuntu 26.04 VM).
+#   RHEL 10:       kdump-utils (kdumpctl), via grubby on the BLS boot entries
+#                  (crashkernel=2G-64G:256M,... = 256 MB on a 4 GB VM). With
+#                  auto_reset_crashkernel=yes (the default) and kdump.service
+#                  enabled, kdumpctl re-adds crashkernel= to newly installed
+#                  kernels.
 #
 # What it does:
-#  disable  1. Writes /etc/default/grub.d/zz-no-crashkernel.cfg, sourced after
-#              kdump-tools.cfg, which strips crashkernel=... from the grub
-#              cmdline variables; runs update-grub (persists across reboots
-#              and kdump-tools upgrades, whose conffile is left untouched).
-#           2. Sets USE_KDUMP=0 and disables the kdump-tools service.
+#  disable  1. Removes crashkernel= from the next boot (persists across reboots,
+#              kernel updates and kdump package upgrades):
+#              Debian: writes /etc/default/grub.d/zz-no-crashkernel.cfg, sourced
+#                after kdump-tools.cfg, which strips crashkernel=... from the
+#                grub cmdline variables; runs update-grub (kdump-tools'
+#                conffile is left untouched).
+#              RHEL: sets auto_reset_crashkernel no in /etc/kdump.conf and runs
+#                grubby --update-kernel=ALL --remove-args=crashkernel (also
+#                strips it from /etc/kernel/cmdline and GRUB_CMDLINE_LINUX if
+#                present, which seed future kernels' entries).
+#           2. Disables kdump: Debian USE_KDUMP=0 + kdump-tools service;
+#              RHEL kdump service.
 #           3. Frees the reservation now: unloads the crash kernel and writes
 #              0 to /sys/kernel/kexec_crash_size, returning the RAM to the
 #              system without a reboot. If that fails, it says a reboot is
 #              needed.
-#  enable   1. Installs kdump-tools if missing, removes the override file,
-#              runs update-grub so crashkernel=... is back on the cmdline.
-#           2. Sets USE_KDUMP=1 and enables the kdump-tools service.
+#  enable   1. Installs the kdump package if missing (Debian kdump-tools,
+#              RHEL kdump-utils) and restores crashkernel=:
+#              Debian: removes the override file, runs update-grub.
+#              RHEL: sets auto_reset_crashkernel yes, runs
+#                kdumpctl reset-crashkernel --kernel=ALL (RHEL's default size).
+#           2. Enables kdump (Debian USE_KDUMP=1 + kdump-tools; RHEL kdump).
 #           3. The reservation can only be made at boot, so if none is active
 #              it says a reboot is required; otherwise loads the crash kernel.
 #  (none)   Prints running state, next-boot state, and usage.
 #
-# Supported: Debian-family Linux with systemd and GRUB (update-grub). Tested
-# only on Ubuntu 26.04 (kernel 7.0); enable/disable refuse elsewhere.
-# Sanity checks: before changing anything it verifies the OS, GRUB files,
-# update-grub and the kexec sysfs file exist. Every file it modifies is first
-# copied to <file>.bak (previous state; overwritten each run): kdump-tools
-# defaults, grub.cfg, and the override file. After update-grub it verifies
-# grub.cfg has (or lacks) crashkernel= and stops with restore hints if not.
+# Idempotent: if the requested state is already in place it changes nothing
+# (so the .bak backups keep the state from before the last real change). Safe
+# to run repeatedly from configuration management such as Salt; use
+# 'check enable|disable' as an unless condition so Salt reports "no change".
+# 'check disable' also requires the reservation to be freed already; 'check
+# enable' does not require the reboot that makes the reservation.
+#
+# Supported: Linux with systemd and GRUB on the Debian family (update-grub;
+# tested on Ubuntu 26.04, kernel 7.0) or the RHEL 10 family (grubby + BLS;
+# tested on CentOS Stream 10, kernel 6.12). enable/disable refuse elsewhere.
+# Sanity checks: before changing anything it verifies the OS, bootloader
+# tools/files and the kexec sysfs file exist. Every file it modifies is first
+# copied to <file>.bak (previous state; overwritten each real change): kdump
+# config, grub.cfg / the BLS entries (RHEL: to /boot/loader/entries.bak/,
+# outside the directory GRUB scans), /etc/kernel/cmdline, /etc/default/grub,
+# and the override file. Afterwards it verifies the next-boot config has (or
+# lacks) crashkernel= and stops with restore hints if not.
 set -euo pipefail
 
-OVERRIDE=/etc/default/grub.d/zz-no-crashkernel.cfg
-KDUMP_DEFAULTS=/etc/default/kdump-tools
 SIZE_FILE=/sys/kernel/kexec_crash_size
 
 usage() {
   echo "Usage: $0 enable|disable"
+  echo "       $0 check enable|disable   (exit 0 if already in that state)"
   echo "  disable  free the crash-kernel RAM reservation (applies now, persists)"
   echo "  enable   restore crashkernel= and kdump (needs a reboot to reserve RAM)"
 }
 
+die() { echo "$(basename "$0"): $*" >&2; exit 1; }
+
+# Detect OS family: Debian/Ubuntu or RHEL 10 family (RHEL, CentOS Stream, Alma, Rocky)
+OS_NAME=$(uname -s) OS_IDS= FAMILY=
+if [ -r /etc/os-release ]; then
+  OS_NAME=$(. /etc/os-release && echo "${PRETTY_NAME:-${ID:-$OS_NAME}}")
+  OS_IDS=$(. /etc/os-release && echo " ${ID:-} ${ID_LIKE:-} ")
+fi
+if [[ "$OS_IDS" == *" debian "* || "$OS_IDS" == *" ubuntu "* ]] &&
+   command -v apt-get >/dev/null && command -v dpkg >/dev/null; then
+  FAMILY=debian
+elif [[ "$OS_IDS" == *" rhel "* ]] && command -v dnf >/dev/null && command -v rpm >/dev/null; then
+  FAMILY=rhel
+fi
+
+if [ "$FAMILY" = rhel ]; then
+  SERVICE=kdump.service
+  KDUMP_CONF=/etc/kdump.conf
+  GRUB_CFG=/boot/grub2/grub.cfg
+  BLS_DIR=/boot/loader/entries
+else
+  SERVICE=kdump-tools.service
+  KDUMP_DEFAULTS=/etc/default/kdump-tools
+  OVERRIDE=/etc/default/grub.d/zz-no-crashkernel.cfg
+  GRUB_CFG=/boot/grub/grub.cfg
+fi
+
 mb() { echo $(( $1 / 1024 / 1024 )); }
+reserved() { cat $SIZE_FILE 2>/dev/null || echo 0; }
+
+# Does the next boot's kernel command line contain crashkernel=? (present|absent)
+nextboot() {
+  if [ "$FAMILY" = rhel ]; then
+    # Default entry; grubby needs root to read the BLS entries on some setups
+    grubby --info=DEFAULT 2>/dev/null | grep -q '^args=.*crashkernel=' && { echo present; return; }
+  elif [ -r $GRUB_CFG ] && grep -E '^\s*linux\s' $GRUB_CFG | grep -q 'crashkernel='; then
+    echo present; return
+  fi
+  echo absent
+}
+
+# kdump on/off setting (Debian USE_KDUMP, RHEL auto_reset_crashkernel)
+kdump_setting() {
+  if [ "$FAMILY" = rhel ]; then
+    local v=yes
+    [ -r $KDUMP_CONF ] || { echo "auto_reset_crashkernel=n/a"; return; }
+    v=$(sed -n 's/^\s*auto_reset_crashkernel\s\+//p' $KDUMP_CONF | tail -1)
+    echo "auto_reset_crashkernel=${v:-yes (default)}"
+  else
+    local v=
+    [ -r $KDUMP_DEFAULTS ] && v=$(sed -n 's/^USE_KDUMP=//p' $KDUMP_DEFAULTS | tail -1)
+    echo "USE_KDUMP=${v:-unset}"
+  fi
+}
+
+service_state() {
+  systemctl cat $SERVICE >/dev/null 2>&1 || { echo n/a; return; }
+  systemctl is-enabled $SERVICE 2>/dev/null || true
+}
 
 status() {
-  local size=0 loaded=0 cmdline=absent nextboot=absent usek=unset svc=n/a
-  [ -r $SIZE_FILE ] && size=$(cat $SIZE_FILE)
+  local size loaded=0 cmdline=absent nb
+  size=$(reserved) nb=$(nextboot)
   [ -r /sys/kernel/kexec_crash_loaded ] && loaded=$(cat /sys/kernel/kexec_crash_loaded)
   grep -q 'crashkernel=' /proc/cmdline && cmdline=present
-  if [ -r /boot/grub/grub.cfg ] && grep -E '^\s*linux\s' /boot/grub/grub.cfg | grep -q 'crashkernel='; then
-    nextboot=present
-  fi
-  [ -r $KDUMP_DEFAULTS ] && usek=$(sed -n 's/^USE_KDUMP=//p' $KDUMP_DEFAULTS | tail -1)
-  systemctl cat kdump-tools.service >/dev/null 2>&1 && svc=$(systemctl is-enabled kdump-tools.service 2>/dev/null || true)
 
   echo "Crash kernel (kdump) memory reservation on $(hostname -s):"
   echo "  reserved now        : $(mb "$size") MB   (crash kernel loaded: $loaded)"
   echo "  running cmdline     : crashkernel= $cmdline"
-  echo "  next boot (grub.cfg): crashkernel= $nextboot"
-  echo "  override file       : $([ -e $OVERRIDE ] && echo "$OVERRIDE" || echo none)"
-  echo "  kdump-tools         : USE_KDUMP=${usek:-unset}, service ${svc:-n/a}"
+  if [ "$FAMILY" = rhel ]; then
+    echo "  next boot (grubby)  : crashkernel= $nb"
+  else
+    echo "  next boot (grub.cfg): crashkernel= $nb"
+    echo "  override file       : $([ -e $OVERRIDE ] && echo "$OVERRIDE" || echo none)"
+  fi
+  echo "  kdump               : $(kdump_setting), $SERVICE $(service_state)"
   echo "  MemTotal            : $(awk '/^MemTotal:/ {print int($2/1024)}' /proc/meminfo) MB"
-  if [ "$nextboot" = present ] && [ "$size" -eq 0 ]; then
+  if [ "$nb" = present ] && [ "$size" -eq 0 ]; then
     echo "  => enabled for next boot; REBOOT REQUIRED to reserve the memory"
-  elif [ "$nextboot" = absent ] && [ "$size" -gt 0 ]; then
+  elif [ "$nb" = absent ] && [ "$size" -gt 0 ]; then
     echo "  => disabled for next boot; $(mb "$size") MB still reserved until reboot or '$0 disable'"
-  elif [ "$nextboot" = present ]; then
+  elif [ "$nb" = present ]; then
     echo "  => ENABLED"
   else
     echo "  => DISABLED"
   fi
 }
 
-MODE=${1:-}
+# Is the requested state already fully in place?
+in_state() {
+  local svc
+  svc=$(service_state)
+  case "$1" in
+    disable)
+      [ "$(nextboot)" = absent ] && [ "$(reserved)" -eq 0 ] && [ "$svc" != enabled ] || return 1
+      if [ "$FAMILY" = rhel ]; then
+        [ "$(kdump_setting)" = auto_reset_crashkernel=no ] || [ ! -e $KDUMP_CONF ]
+      else
+        [ "$(kdump_setting)" != USE_KDUMP=1 ] && [ -e $OVERRIDE ]
+      fi ;;
+    enable)
+      [ "$(nextboot)" = present ] && [ "$svc" = enabled ] || return 1
+      if [ "$FAMILY" = rhel ]; then
+        [ "$(kdump_setting)" != auto_reset_crashkernel=no ]
+      else
+        [ "$(kdump_setting)" = USE_KDUMP=1 ] && [ ! -e $OVERRIDE ]
+      fi ;;
+  esac
+}
+
+ACTION=apply MODE=${1:-}
 case "$MODE" in
-  "") status; echo; usage; exit 0 ;;
+  "") # RHEL's BLS entries are root-only, so grubby needs root to read them
+      if [ "$FAMILY" = rhel ] && [ ! -r $BLS_DIR ] && [ "$(id -u)" -ne 0 ]; then exec sudo "$0"; fi
+      if [ -n "$FAMILY" ]; then status; echo; fi; usage; exit 0 ;;
   enable|disable) ;;
+  check) ACTION=check MODE=${2:-}
+         case "$MODE" in enable|disable) ;; *) usage >&2; exit 1 ;; esac ;;
   *) usage >&2; exit 1 ;;
 esac
 
-die() { echo "$(basename "$0"): $*" >&2; exit 1; }
-
-# Refuse on anything but Debian/Ubuntu with systemd as init (checked before sudo)
-OS_NAME=$(uname -s) OS_IDS=
-if [ -r /etc/os-release ]; then
-  OS_NAME=$(. /etc/os-release && echo "${PRETTY_NAME:-${ID:-$OS_NAME}}")
-  OS_IDS=$(. /etc/os-release && echo " ${ID:-} ${ID_LIKE:-} ")
-fi
-if [ "$(uname -s)" != Linux ] || [ ! -d /run/systemd/system ] ||
-   [[ "$OS_IDS" != *" debian "* && "$OS_IDS" != *" ubuntu "* ]] ||
-   ! command -v apt-get >/dev/null || ! command -v dpkg >/dev/null; then
-  die "unsupported system ($OS_NAME): requires Debian/Ubuntu with systemd"
+# Refuse on anything but Debian/Ubuntu or RHEL family with systemd as init (checked before sudo)
+if [ "$(uname -s)" != Linux ] || [ ! -d /run/systemd/system ] || [ -z "$FAMILY" ]; then
+  die "unsupported system ($OS_NAME): requires Debian/Ubuntu or RHEL 10 family with systemd"
 fi
 
 [ "$(id -u)" -eq 0 ] || exec sudo "$0" "$@"
 
+if [ $ACTION = check ]; then in_state "$MODE"; exit; fi
+
 # Sanity checks: everything we read or modify must exist
-GRUB_CFG=/boot/grub/grub.cfg
-command -v update-grub >/dev/null || die "update-grub not found (GRUB required)"
-[ -f /etc/default/grub ]  || die "/etc/default/grub not found (GRUB required)"
-[ -d /etc/default/grub.d ] || die "/etc/default/grub.d not found"
-[ -f $GRUB_CFG ]          || die "$GRUB_CFG not found (EFI-only/non-GRUB boot?)"
-[ -e $SIZE_FILE ]         || die "$SIZE_FILE not found (kernel without kexec/kdump support)"
+if [ "$FAMILY" = rhel ]; then
+  command -v grubby >/dev/null || die "grubby not found (GRUB required)"
+  [ -f /etc/default/grub ]  || die "/etc/default/grub not found (GRUB required)"
+  [ -d $BLS_DIR ]           || die "$BLS_DIR not found (BLS boot entries required)"
+  grubby --info=DEFAULT >/dev/null 2>&1 || die "grubby cannot read the default boot entry"
+else
+  command -v update-grub >/dev/null || die "update-grub not found (GRUB required)"
+  [ -f /etc/default/grub ]  || die "/etc/default/grub not found (GRUB required)"
+  [ -d /etc/default/grub.d ] || die "/etc/default/grub.d not found"
+  [ -f $GRUB_CFG ]          || die "$GRUB_CFG not found (EFI-only/non-GRUB boot?)"
+fi
+[ -e $SIZE_FILE ]           || die "$SIZE_FILE not found (kernel without kexec/kdump support)"
+
+if in_state "$MODE"; then
+  status
+  echo
+  echo "Already ${MODE}d; nothing changed."
+  exit 0
+fi
 
 backup() { [ -e "$1" ] && cp -p "$1" "$1.bak" && echo "  backup: $1.bak"; return 0; }
 
+# Verify the next-boot command line has crashkernel= as expected
+verify_nextboot() {
+  local have
+  have=$(nextboot)
+  [ "$have" = "$1" ] ||
+    die "next boot has crashkernel= $have, expected $1; previous config: $2"
+}
+
+# --- Debian/Ubuntu: kdump-tools + update-grub ---------------------------------
+
 # Regenerate grub.cfg (backed up first) and verify crashkernel= is as expected
 regen_grub() {
-  local want=$1 have=absent out
+  local want=$1 out
   backup $GRUB_CFG
   out=$(update-grub 2>&1) || { echo "$out" >&2; die "update-grub failed; previous config: $GRUB_CFG.bak"; }
-  grep -E '^\s*linux\s' $GRUB_CFG | grep -q 'crashkernel=' && have=present
-  [ "$have" = "$want" ] ||
-    die "grub.cfg has crashkernel= $have, expected $want; check /etc/default/grub*, previous config: $GRUB_CFG.bak"
+  verify_nextboot "$want" "check /etc/default/grub*, $GRUB_CFG.bak"
 }
 
 set_use_kdump() {
@@ -128,41 +251,103 @@ set_use_kdump() {
   fi
 }
 
-REBOOT=no
-case "$MODE" in
-  disable)
-    backup $OVERRIDE
-    cat > $OVERRIDE <<'EOF'
+debian_disable() {
+  backup $OVERRIDE
+  cat > $OVERRIDE <<'EOF'
 # Installed by kdumpsetup.sh: drop the kdump crashkernel= reservation.
 # Sourced after kdump-tools.cfg. Remove this file (or run: kdumpsetup.sh enable)
 # and run update-grub to restore it.
 GRUB_CMDLINE_LINUX_DEFAULT=$(echo "$GRUB_CMDLINE_LINUX_DEFAULT" | sed -E 's/(^| )crashkernel=[^ ]*//g; s/^ +//')
 GRUB_CMDLINE_LINUX=$(echo "$GRUB_CMDLINE_LINUX" | sed -E 's/(^| )crashkernel=[^ ]*//g; s/^ +//')
 EOF
-    regen_grub absent
-    set_use_kdump 0
-    if systemctl cat kdump-tools.service >/dev/null 2>&1; then
-      systemctl disable --now kdump-tools.service >/dev/null 2>&1 || true
-    fi
-    command -v kdump-config >/dev/null && kdump-config unload >/dev/null 2>&1 || true
-    if [ -w $SIZE_FILE ] && [ "$(cat $SIZE_FILE)" -gt 0 ]; then
+  regen_grub absent
+  set_use_kdump 0
+  if systemctl cat $SERVICE >/dev/null 2>&1; then
+    systemctl disable --now $SERVICE >/dev/null 2>&1 || true
+  fi
+  if command -v kdump-config >/dev/null; then kdump-config unload >/dev/null 2>&1 || true; fi
+}
+
+debian_enable() {
+  if ! dpkg -s kdump-tools >/dev/null 2>&1; then
+    DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -y -q kdump-tools >/dev/null
+  fi
+  backup $OVERRIDE
+  rm -f $OVERRIDE
+  regen_grub present
+  set_use_kdump 1
+  systemctl enable $SERVICE >/dev/null 2>&1
+}
+
+# --- RHEL 10 family: kdump-utils (kdumpctl) + grubby ---------------------------
+
+# Copy the BLS entries (and the files seeding future kernels' cmdline) aside
+backup_boot_entries() {
+  rm -rf $BLS_DIR.bak
+  cp -a $BLS_DIR $BLS_DIR.bak && echo "  backup: $BLS_DIR.bak/"
+  backup /etc/kernel/cmdline
+  backup /etc/default/grub
+}
+
+set_auto_reset() {
+  [ -e $KDUMP_CONF ] || return 0
+  backup $KDUMP_CONF
+  if grep -qE '^\s*auto_reset_crashkernel\s' $KDUMP_CONF; then
+    sed -i -E "s/^\s*auto_reset_crashkernel\s.*/auto_reset_crashkernel $1/" $KDUMP_CONF
+  else
+    echo "auto_reset_crashkernel $1" >> $KDUMP_CONF
+  fi
+}
+
+rhel_disable() {
+  set_auto_reset no
+  if systemctl cat $SERVICE >/dev/null 2>&1; then
+    systemctl disable --now $SERVICE >/dev/null 2>&1 || true
+  fi
+  backup_boot_entries
+  grubby --update-kernel=ALL --remove-args=crashkernel >/dev/null
+  # Seeds for kernels installed later (grubby normally handles these, but be sure)
+  if [ -f /etc/kernel/cmdline ]; then
+    sed -i -E 's/(^| )crashkernel=[^ ]*//g' /etc/kernel/cmdline
+  fi
+  sed -i -E '/^GRUB_CMDLINE_LINUX=/ s/ ?crashkernel=[^ "]*//g' /etc/default/grub
+  verify_nextboot absent "$BLS_DIR.bak/, /etc/kernel/cmdline.bak, /etc/default/grub.bak"
+  if grubby --info=ALL 2>/dev/null | grep -q '^args=.*crashkernel='; then
+    die "some boot entries still have crashkernel=; see grubby --info=ALL; previous entries: $BLS_DIR.bak/"
+  fi
+  if command -v kexec >/dev/null; then kexec -p -u >/dev/null 2>&1 || true; fi
+}
+
+rhel_enable() {
+  if ! command -v kdumpctl >/dev/null; then
+    dnf install -y -q kdump-utils >/dev/null
+  fi
+  set_auto_reset yes
+  backup_boot_entries
+  kdumpctl reset-crashkernel --kernel=ALL >/dev/null 2>&1 ||
+    die "kdumpctl reset-crashkernel failed; previous entries: $BLS_DIR.bak/"
+  verify_nextboot present "$BLS_DIR.bak/"
+  systemctl enable $SERVICE >/dev/null 2>&1
+}
+
+# ------------------------------------------------------------------------------
+
+REBOOT=no
+case "$MODE" in
+  disable)
+    ${FAMILY}_disable
+    # Free the reservation now (crash kernel must be unloaded first)
+    if [ -w $SIZE_FILE ] && [ "$(reserved)" -gt 0 ]; then
       echo 0 > $SIZE_FILE 2>/dev/null || true
-      [ "$(cat $SIZE_FILE)" -eq 0 ] || REBOOT=yes
+      [ "$(reserved)" -eq 0 ] || REBOOT=yes
     fi
     ;;
   enable)
-    if ! dpkg -s kdump-tools >/dev/null 2>&1; then
-      DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -y -q kdump-tools >/dev/null
-    fi
-    backup $OVERRIDE
-    rm -f $OVERRIDE
-    regen_grub present
-    set_use_kdump 1
-    systemctl enable kdump-tools.service >/dev/null 2>&1
-    if [ "$(cat $SIZE_FILE 2>/dev/null || echo 0)" -eq 0 ]; then
+    ${FAMILY}_enable
+    if [ "$(reserved)" -eq 0 ]; then
       REBOOT=yes
     else
-      systemctl restart kdump-tools.service || true
+      systemctl restart $SERVICE || true
     fi
     ;;
 esac

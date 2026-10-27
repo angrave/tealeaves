@@ -2,13 +2,23 @@
 # ramsetup.sh - choose compressed swap: none | zram | zswap  (persistent)
 #
 # Usage: ramsetup.sh none|zram|zswap      (re-execs itself with sudo if needed)
+#        ramsetup.sh check none|zram|zswap  exit 0 if already in that mode, else 1
+#        ramsetup.sh status                 print the current mode
 #
-# Supported: Debian-family Linux with systemd (uses apt/dpkg, systemd units,
-# update-motd.d). Tested only on Ubuntu 26.04 (kernel 7.0); refuses elsewhere.
+# Supported: Linux with systemd on
+#   - Debian family (apt/dpkg, update-motd.d). Tested on Ubuntu 26.04 (kernel 7.0).
+#   - RHEL family (dnf/rpm, profile.d banner): RHEL 10 and rebuilds (CentOS
+#     Stream, AlmaLinux, Rocky). Tested on CentOS Stream 10 (kernel 6.12).
+# Refuses elsewhere.
+#
+# Idempotent: if the requested mode is already fully in place it changes
+# nothing (no zram device recreation, no package churn) and says so. This makes
+# it safe to run repeatedly from configuration management such as Salt; use
+# 'check MODE' as an unless/onlyif condition so Salt reports "no change".
 #
 # What it does:
 #  none   Disables zram and zswap; only the disk swap remains.
-#  zram   Disables zswap, then enables zram swap (systemd-zram-generator).
+#  zram   Disables zswap, then enables zram swap (zram-generator).
 #  zswap  Disables zram, then enables zswap in front of the disk swap.
 #  Every mode resets vm.swappiness/vm.page-cluster to kernel defaults (60/3)
 #  before applying the chosen mode's sysctls, installs the login banner, and
@@ -17,12 +27,13 @@
 #  removed (zram/zstd can't load), it stops and says to reboot first.
 #
 # zram:
-#  1. Installs systemd-zram-generator.
+#  1. Installs the zram generator (Debian: systemd-zram-generator,
+#     RHEL: zram-generator from AppStream).
 #  2. Writes /etc/systemd/zram-generator.conf for /dev/zram0:
 #     zram-size = ram (uncompressed capacity; nothing is reserved up front),
 #     zram-resident-limit = ram * 3 / 10 (30%; cap on real RAM zram may use; sets
 #     /sys/block/zram0/mem_limit), compression zstd, swap-priority 100 so zram
-#     is used before the disk swap (priority -1), which remains as overflow.
+#     is used before the disk swap (negative priority), which remains as overflow.
 #  3. Writes /etc/sysctl.d/99-zram.conf: vm.swappiness=180 (in-RAM swap is
 #     cheap, so bias reclaim towards it) and vm.page-cluster=0 (no swap
 #     readahead; there is no seek cost to amortise).
@@ -32,22 +43,24 @@
 #     (ExecStop) can race udev right after swapoff and fail with EBUSY,
 #     leaving the old device initialised ("Can't change algorithm for
 #     initialized device").
-#  Disabling zram: swapoff + reset zram0, purge systemd-zram-generator (it
-#  ships a default /usr/lib/systemd/zram-generator.conf, so just deleting the
-#  /etc config would still create zram at boot), delete the config files.
+#  Disabling zram: swapoff + reset zram0, remove the generator package (the
+#  Debian one ships a default /usr/lib/systemd/zram-generator.conf, so just
+#  deleting the /etc config would still create zram at boot), delete the
+#  config files.
 #  swapoff must page zram contents back into RAM; if it is heavily used and
 #  memory is short this fails and the script stops - reboot instead.
 #
 # zswap:
-#  1. Requires an active disk swap partition (zswap needs a backing device).
-#  2. Loads the zstd compressor module (a module, not built in, here).
+#  1. Requires an active disk swap (partition or file; zswap needs a backing
+#     device).
+#  2. Loads the zstd compressor module (a module, not built in, on both).
 #  3. Persists settings via /etc/tmpfiles.d/zswap.conf, which writes the zswap
 #     module parameters early at every boot: compressor=zstd,
 #     max_pool_percent=30 (~1 GB of a 3.4 GB VM), shrinker_enabled=Y (cold
-#     pages get written back to disk swap), enabled=Y.
+#     pages get written back to disk swap; default N on RHEL), enabled=Y.
 #     tmpfiles.d is used instead of zswap.* kernel cmdline args because zswap
 #     can initialise before the zstd module is loadable and silently fall back
-#     to lzo; it also avoids update-grub.
+#     to lzo; it also avoids touching the bootloader (update-grub / grubby).
 #  4. Writes /etc/sysctl.d/99-zswap.conf: vm.swappiness=100. Lower than
 #     zram's 180 because incompressible/overflow pages still hit disk.
 #     vm.page-cluster stays at default 3 (readahead helps for disk swap).
@@ -55,92 +68,96 @@
 #  is off (CONFIG_ZSWAP_DEFAULT_ON is not set), so it stays off after reboot.
 #  Pages already in the pool drain out naturally.
 #
-# Login banner: /etc/update-motd.d/01-compressed-swap shows zram/zswap status,
-# usage and how to disable it (using this script's actual path). It prints nothing in 'none' mode.
+# Login banner shows zram/zswap status, usage and how to disable it (using this
+# script's actual path; install the script somewhere permanent, such as
+# /usr/local/sbin, rather than running it from a temporary copy). It prints
+# nothing in 'none' mode.
+#   Debian: /etc/update-motd.d/01-compressed-swap (run by pam_motd at login)
+#   RHEL:   /usr/local/libexec/compressed-swap-banner, run for interactive
+#           login shells by /etc/profile.d/zz-compressed-swap.sh (RHEL's
+#           pam_motd only shows static files, so update-motd.d isn't available)
 set -euo pipefail
 
-MODE=${1:-}
+usage() {
+  echo "Usage: $0 none|zram|zswap" >&2
+  echo "       $0 check none|zram|zswap   (exit 0 if already in that mode)" >&2
+  echo "       $0 status" >&2
+  echo "  none   disk swap only (disable zram and zswap)" >&2
+  echo "  zram   compressed swap device in RAM (disables zswap)" >&2
+  echo "  zswap  compressed RAM cache in front of disk swap (disables zram)" >&2
+  exit 1
+}
+
+ACTION=apply MODE=${1:-}
 case "$MODE" in
   none|zram|zswap) ;;
-  *) echo "Usage: $0 none|zram|zswap" >&2
-     echo "  none   disk swap only (disable zram and zswap)" >&2
-     echo "  zram   compressed swap device in RAM (disables zswap)" >&2
-     echo "  zswap  compressed RAM cache in front of disk swap (disables zram)" >&2
-     exit 1 ;;
+  check)  ACTION=check MODE=${2:-}
+          case "$MODE" in none|zram|zswap) ;; *) usage ;; esac ;;
+  status) ACTION=status ;;
+  *) usage ;;
 esac
 
-# Refuse on anything but Debian/Ubuntu with systemd as init (checked before sudo)
-OS_NAME=$(uname -s) OS_IDS=
+# Refuse on anything but Debian/Ubuntu or RHEL-family with systemd as init
+# (checked before sudo)
+OS_NAME=$(uname -s) OS_IDS= FAMILY=
 if [ -r /etc/os-release ]; then
   OS_NAME=$(. /etc/os-release && echo "${PRETTY_NAME:-${ID:-$OS_NAME}}")
   OS_IDS=$(. /etc/os-release && echo " ${ID:-} ${ID_LIKE:-} ")
 fi
-if [ "$(uname -s)" != Linux ] || [ ! -d /run/systemd/system ] ||
-   [[ "$OS_IDS" != *" debian "* && "$OS_IDS" != *" ubuntu "* ]] ||
-   ! command -v apt-get >/dev/null || ! command -v dpkg >/dev/null; then
-  echo "$(basename "$0"): unsupported system ($OS_NAME): requires Debian/Ubuntu with systemd" >&2
+if [[ "$OS_IDS" == *" debian "* || "$OS_IDS" == *" ubuntu "* ]] &&
+   command -v apt-get >/dev/null && command -v dpkg >/dev/null; then
+  FAMILY=debian
+elif [[ "$OS_IDS" == *" rhel "* ]] &&
+   command -v dnf >/dev/null && command -v rpm >/dev/null; then
+  FAMILY=rhel
+fi
+if [ "$(uname -s)" != Linux ] || [ ! -d /run/systemd/system ] || [ -z "$FAMILY" ]; then
+  echo "$(basename "$0"): unsupported system ($OS_NAME): requires Debian/Ubuntu or RHEL 10 family with systemd" >&2
   exit 1
 fi
-
-[ "$(id -u)" -eq 0 ] || exec sudo "$0" "$@"
 
 ZSWAP_COMPRESSOR=zstd
 ZSWAP_MAX_POOL_PERCENT=30   # max % of RAM the compressed pool may use
 ZP=/sys/module/zswap/parameters
 SELF=$(readlink -f "$0")      # this script's real path, shown in the banner
 
-# No reboot is needed to switch modes. The one case that does need one: the
-# running kernel's modules were removed (e.g. apt autoremove after a kernel
-# upgrade), so zram/zstd can't be loaded until booting the installed kernel.
-need_modules() {
-  local m
-  for m in "$@"; do
-    if ! modprobe -n -q "$m"; then
-      echo "Kernel module '$m' is not available for the running kernel $(uname -r)." >&2
-      echo "Reboot into the installed kernel, then re-run: $0 $MODE" >&2
-      exit 1
-    fi
-  done
-}
-case "$MODE" in
-  zram)  need_modules zram zstd ;;
-  zswap) need_modules zstd ;;
-esac
+ZRAM_CONF=/etc/systemd/zram-generator.conf
+ZSWAP_TMPFILES=/etc/tmpfiles.d/zswap.conf
+if [ $FAMILY = debian ]; then
+  ZRAM_PKG=systemd-zram-generator
+  BANNER=/etc/update-motd.d/01-compressed-swap
+  BANNER_HOOK=
+else
+  ZRAM_PKG=zram-generator
+  BANNER=/usr/local/libexec/compressed-swap-banner
+  BANNER_HOOK=/etc/profile.d/zz-compressed-swap.sh
+fi
 
-stop_zram_device() {
-  systemctl stop dev-zram0.swap 2>/dev/null || true
-  if [ -e /sys/block/zram0 ] && swapon --noheadings --show=NAME | grep -qx /dev/zram0; then
-    swapoff /dev/zram0
+pkg_installed() {
+  if [ $FAMILY = debian ]; then
+    dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q 'install ok installed'
+  else
+    rpm -q "$1" >/dev/null 2>&1
   fi
-  systemctl stop systemd-zram-setup@zram0.service 2>/dev/null || true
-  udevadm settle
-  if [ -e /sys/block/zram0 ]; then
-    echo 1 > /sys/block/zram0/reset
+}
+pkg_install() {
+  if [ $FAMILY = debian ]; then
+    DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -y -q "$@" >/dev/null
+  else
+    dnf install -y -q "$@" >/dev/null
   fi
-  systemctl reset-failed systemd-zram-setup@zram0.service dev-zram0.swap 2>/dev/null || true
 }
-
-disable_zram() {
-  echo "Disabling zram..."
-  stop_zram_device
-  if dpkg -s systemd-zram-generator >/dev/null 2>&1; then
-    DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get purge -y -q systemd-zram-generator >/dev/null
+pkg_remove() {
+  if [ $FAMILY = debian ]; then
+    DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get purge -y -q "$@" >/dev/null
+  else
+    dnf remove -y -q "$@" >/dev/null
   fi
-  rm -f /etc/systemd/zram-generator.conf /etc/sysctl.d/99-zram.conf
-  systemctl daemon-reload
 }
 
-disable_zswap() {
-  echo "Disabling zswap..."
-  [ -w $ZP/enabled ] && echo N > $ZP/enabled
-  rm -f /etc/tmpfiles.d/zswap.conf /etc/sysctl.d/99-zswap.conf
-}
-
-enable_zram() {
-  echo "Enabling zram..."
-  DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -y -q systemd-zram-generator >/dev/null
-
-  cat > /etc/systemd/zram-generator.conf <<'EOF'
+# Desired file contents (also used by 'check' to detect drift)
+zram_conf() {
+  cat <<'EOF'
 [zram0]
 zram-size = ram
 zram-resident-limit = ram * 3 / 10
@@ -148,51 +165,37 @@ compression-algorithm = zstd
 swap-priority = 100
 fs-type = swap
 EOF
-
-  cat > /etc/sysctl.d/99-zram.conf <<'EOF'
+}
+zram_sysctl() {
+  cat <<'EOF'
 # in-RAM swap is cheap, so bias reclaim towards it
 vm.swappiness = 180
 # no seek latency to amortise, so no swap readahead
 vm.page-cluster = 0
 EOF
-
-  # Recreate zram0 with the new config (see header for why the manual reset)
-  systemctl daemon-reload
-  stop_zram_device
-  systemctl start dev-zram0.swap
 }
-
-enable_zswap() {
-  echo "Enabling zswap..."
-  if ! swapon --noheadings --show=TYPE | grep -q partition; then
-    echo "No disk swap partition active; zswap needs one." >&2
-    exit 1
-  fi
-  modprobe "$ZSWAP_COMPRESSOR"
-
-  # Applied at every boot by systemd-tmpfiles (no kernel cmdline / grub change)
-  cat > /etc/tmpfiles.d/zswap.conf <<EOF
+zswap_tmpfiles() {
+  cat <<EOF
 w- $ZP/compressor       - - - - $ZSWAP_COMPRESSOR
 w- $ZP/max_pool_percent - - - - $ZSWAP_MAX_POOL_PERCENT
 w- $ZP/shrinker_enabled - - - - Y
 w- $ZP/enabled          - - - - Y
 EOF
-
-  cat > /etc/sysctl.d/99-zswap.conf <<'EOF'
+}
+zswap_sysctl() {
+  cat <<'EOF'
 # swap-out is mostly to compressed RAM, so swap a little more readily than default 60
 vm.swappiness = 100
 EOF
-
-  # Apply now
-  echo "$ZSWAP_COMPRESSOR"       > $ZP/compressor
-  echo "$ZSWAP_MAX_POOL_PERCENT" > $ZP/max_pool_percent
-  echo Y                         > $ZP/shrinker_enabled
-  echo Y                         > $ZP/enabled
 }
-
-install_banner() {
-  rm -f /etc/update-motd.d/01-zram   # older zram-only banner
-  cat > /etc/update-motd.d/01-compressed-swap <<'MOTD'
+banner_hook() {
+  cat <<EOF
+# Installed by $SELF: show zram/zswap status on interactive login.
+if [ -t 1 ]; then case \$- in *i*) $BANNER ;; esac; fi
+EOF
+}
+banner() {
+  cat <<'MOTD'
 #!/bin/sh
 # Login banner: announce zram / zswap compressed swap and how to disable each.
 # Installed by @SELF@.
@@ -229,8 +232,149 @@ if [ "$(cat $P/enabled 2>/dev/null)" = "Y" ]; then
 fi
 exit 0
 MOTD
-  sed -i "s|@SELF@|$SELF|g" /etc/update-motd.d/01-compressed-swap
-  chmod 755 /etc/update-motd.d/01-compressed-swap
+}
+
+# file_is PATH GENERATOR: true if PATH exists with exactly the generated content
+file_is() { [ -f "$1" ] && cmp -s "$1" <("$2"); }
+zram_active()  { swapon --noheadings --show=NAME 2>/dev/null | grep -qx /dev/zram0; }
+zswap_active() { [ "$(cat $ZP/enabled 2>/dev/null)" = Y ]; }
+banner_ok() {
+  cmp -s $BANNER <(banner | sed "s|@SELF@|$SELF|g") || return 1
+  [ -z "$BANNER_HOOK" ] || file_is $BANNER_HOOK banner_hook
+}
+
+# Is MODE fully in place (live state, persistent config and banner)?
+in_mode() {
+  local zram=no zswap=no
+  if zram_active || pkg_installed $ZRAM_PKG || [ -e $ZRAM_CONF ] || [ -e /etc/sysctl.d/99-zram.conf ]; then
+    zram=partial
+    zram_active && pkg_installed $ZRAM_PKG && file_is $ZRAM_CONF zram_conf &&
+      file_is /etc/sysctl.d/99-zram.conf zram_sysctl &&
+      grep -q '\[zstd\]' /sys/block/zram0/comp_algorithm 2>/dev/null && zram=yes
+  fi
+  if zswap_active || [ -e $ZSWAP_TMPFILES ] || [ -e /etc/sysctl.d/99-zswap.conf ]; then
+    zswap=partial
+    zswap_active && file_is $ZSWAP_TMPFILES zswap_tmpfiles &&
+      file_is /etc/sysctl.d/99-zswap.conf zswap_sysctl &&
+      [ "$(cat $ZP/compressor)" = $ZSWAP_COMPRESSOR ] &&
+      [ "$(cat $ZP/max_pool_percent)" = $ZSWAP_MAX_POOL_PERCENT ] &&
+      [ "$(cat $ZP/shrinker_enabled)" = Y ] && zswap=yes
+  fi
+  case "$1" in
+    none)  [ $zram = no ]  && [ $zswap = no ] ;;
+    zram)  [ $zram = yes ] && [ $zswap = no ] && banner_ok ;;
+    zswap) [ $zram = no ]  && [ $zswap = yes ] && banner_ok ;;
+  esac
+}
+
+current_mode() {
+  local m
+  for m in none zram zswap; do in_mode $m && { echo $m; return; }; done
+  echo "mixed/partial (re-run with the desired mode)"
+}
+
+case "$ACTION" in
+  status) echo "Mode: $(current_mode)"; exit 0 ;;
+  check)  in_mode "$MODE"; exit ;;   # read-only; works without root
+esac
+
+[ "$(id -u)" -eq 0 ] || exec sudo "$0" "$@"
+
+if in_mode "$MODE"; then
+  echo "Already in mode '$MODE'; nothing changed."
+  exit 0
+fi
+
+# No reboot is needed to switch modes. The one case that does need one: the
+# running kernel's modules were removed (e.g. apt autoremove / dnf after a
+# kernel upgrade), so zram/zstd can't be loaded until booting the installed kernel.
+need_modules() {
+  local m
+  for m in "$@"; do
+    if ! modprobe -n -q "$m"; then
+      echo "Kernel module '$m' is not available for the running kernel $(uname -r)." >&2
+      echo "Reboot into the installed kernel, then re-run: $0 $MODE" >&2
+      exit 1
+    fi
+  done
+}
+case "$MODE" in
+  zram)  need_modules zram zstd ;;
+  zswap) need_modules zstd ;;
+esac
+
+stop_zram_device() {
+  systemctl stop dev-zram0.swap 2>/dev/null || true
+  if [ -e /sys/block/zram0 ] && zram_active; then
+    swapoff /dev/zram0
+  fi
+  systemctl stop systemd-zram-setup@zram0.service 2>/dev/null || true
+  udevadm settle
+  if [ -e /sys/block/zram0 ]; then
+    echo 1 > /sys/block/zram0/reset
+  fi
+  systemctl reset-failed systemd-zram-setup@zram0.service dev-zram0.swap 2>/dev/null || true
+}
+
+disable_zram() {
+  echo "Disabling zram..."
+  # Remove the generator first: while its units exist, systemd can restart
+  # zram0 right after we stop it (seen shortly after boot).
+  if pkg_installed $ZRAM_PKG; then
+    pkg_remove $ZRAM_PKG
+  fi
+  rm -f $ZRAM_CONF /etc/sysctl.d/99-zram.conf
+  systemctl daemon-reload
+  stop_zram_device
+}
+
+disable_zswap() {
+  echo "Disabling zswap..."
+  if [ -w $ZP/enabled ]; then echo N > $ZP/enabled; fi
+  rm -f $ZSWAP_TMPFILES /etc/sysctl.d/99-zswap.conf
+}
+
+enable_zram() {
+  echo "Enabling zram..."
+  pkg_install $ZRAM_PKG
+  zram_conf   > $ZRAM_CONF
+  zram_sysctl > /etc/sysctl.d/99-zram.conf
+
+  # Recreate zram0 with the new config (see header for why the manual reset)
+  systemctl daemon-reload
+  stop_zram_device
+  systemctl start dev-zram0.swap
+}
+
+enable_zswap() {
+  echo "Enabling zswap..."
+  if ! swapon --noheadings --show=TYPE,NAME | grep -v /dev/zram | grep -qE '^(partition|file) '; then
+    echo "No disk swap (partition or file) active; zswap needs one." >&2
+    exit 1
+  fi
+  modprobe "$ZSWAP_COMPRESSOR"
+
+  # Applied at every boot by systemd-tmpfiles (no kernel cmdline / bootloader change)
+  zswap_tmpfiles > $ZSWAP_TMPFILES
+  zswap_sysctl   > /etc/sysctl.d/99-zswap.conf
+
+  # Apply now
+  echo "$ZSWAP_COMPRESSOR"       > $ZP/compressor
+  echo "$ZSWAP_MAX_POOL_PERCENT" > $ZP/max_pool_percent
+  echo Y                         > $ZP/shrinker_enabled
+  echo Y                         > $ZP/enabled
+}
+
+install_banner() {
+  if [ $FAMILY = debian ]; then
+    rm -f /etc/update-motd.d/01-zram   # older zram-only banner
+  else
+    mkdir -p "$(dirname $BANNER)"
+    banner_hook > $BANNER_HOOK
+    chmod 644 $BANNER_HOOK
+  fi
+  banner | sed "s|@SELF@|$SELF|g" > $BANNER
+  chmod 755 $BANNER
 }
 
 case "$MODE" in
@@ -244,6 +388,12 @@ sysctl -q -w vm.swappiness=60 vm.page-cluster=3
 sysctl --system >/dev/null
 
 install_banner
+
+if ! in_mode "$MODE"; then
+  echo "$(basename "$0"): '$MODE' did not fully apply (now: $(current_mode)); see output above" >&2
+  swapon --show >&2
+  exit 1
+fi
 
 echo
 echo "Mode: $MODE"

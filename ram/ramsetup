@@ -238,6 +238,13 @@ MOTD
 file_is() { [ -f "$1" ] && cmp -s "$1" <("$2"); }
 zram_active()  { swapon --noheadings --show=NAME 2>/dev/null | grep -qx /dev/zram0; }
 zswap_active() { [ "$(cat $ZP/enabled 2>/dev/null)" = Y ]; }
+# Any trace of zram / zswap (live, package or config) that disabling would remove?
+zram_present() {
+  zram_active || pkg_installed $ZRAM_PKG || [ -e $ZRAM_CONF ] || [ -e /etc/sysctl.d/99-zram.conf ]
+}
+zswap_present() {
+  zswap_active || [ -e $ZSWAP_TMPFILES ] || [ -e /etc/sysctl.d/99-zswap.conf ]
+}
 banner_ok() {
   cmp -s $BANNER <(banner | sed "s|@SELF@|$SELF|g") || return 1
   [ -z "$BANNER_HOOK" ] || file_is $BANNER_HOOK banner_hook
@@ -246,13 +253,13 @@ banner_ok() {
 # Is MODE fully in place (live state, persistent config and banner)?
 in_mode() {
   local zram=no zswap=no
-  if zram_active || pkg_installed $ZRAM_PKG || [ -e $ZRAM_CONF ] || [ -e /etc/sysctl.d/99-zram.conf ]; then
+  if zram_present; then
     zram=partial
     zram_active && pkg_installed $ZRAM_PKG && file_is $ZRAM_CONF zram_conf &&
       file_is /etc/sysctl.d/99-zram.conf zram_sysctl &&
       grep -q '\[zstd\]' /sys/block/zram0/comp_algorithm 2>/dev/null && zram=yes
   fi
-  if zswap_active || [ -e $ZSWAP_TMPFILES ] || [ -e /etc/sysctl.d/99-zswap.conf ]; then
+  if zswap_present; then
     zswap=partial
     zswap_active && file_is $ZSWAP_TMPFILES zswap_tmpfiles &&
       file_is /etc/sysctl.d/99-zswap.conf zswap_sysctl &&
@@ -317,6 +324,7 @@ stop_zram_device() {
 }
 
 disable_zram() {
+  zram_present || return 0
   echo "Disabling zram..."
   # Remove the generator first: while its units exist, systemd can restart
   # zram0 right after we stop it (seen shortly after boot).
@@ -329,6 +337,7 @@ disable_zram() {
 }
 
 disable_zswap() {
+  zswap_present || return 0
   echo "Disabling zswap..."
   if [ -w $ZP/enabled ]; then echo N > $ZP/enabled; fi
   rm -f $ZSWAP_TMPFILES /etc/sysctl.d/99-zswap.conf
